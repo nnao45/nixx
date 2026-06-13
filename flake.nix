@@ -175,6 +175,43 @@
               '');
             }).runner;
 
+        e2eGlobalEnv = mkE2e "e2e-global-env"
+          (nixx.mkTasks
+            {
+              name = "e2e-global-env";
+              env = { GLOBAL = "from_mktasks"; OVERRIDE_ME = "global_value"; };
+            }
+            {
+              check_global = nixx.sh ''
+                test "$GLOBAL" = "from_mktasks" \
+                  || { echo "FAIL: GLOBAL=$GLOBAL"; exit 1; }
+                echo "PASS: global env visible in task"
+              '';
+              check_override = nixx.task
+                {
+                  env = { OVERRIDE_ME = "per_task_value"; };
+                }
+                (nixx.sh ''
+                  test "$OVERRIDE_ME" = "per_task_value" \
+                    || { echo "FAIL: OVERRIDE_ME=$OVERRIDE_ME"; exit 1; }
+                  echo "PASS: per-task env overrides global env"
+                '');
+              check_merge = nixx.task
+                {
+                  env = { EXTRA = "per_task_extra"; };
+                }
+                (nixx.sh ''
+                  test "$GLOBAL" = "from_mktasks" \
+                    || { echo "FAIL: GLOBAL=$GLOBAL"; exit 1; }
+                  test "$EXTRA" = "per_task_extra" \
+                    || { echo "FAIL: EXTRA=$EXTRA"; exit 1; }
+                  echo "PASS: global and per-task env both visible"
+                '');
+              all = nixx.task { deps = [ "check_global" "check_override" "check_merge" ]; } (nixx.sh ''
+                echo "=== e2e-global-env: ALL PASSED ==="
+              '');
+            }).runner;
+
         e2eCircular = mkE2e "e2e-circular"
           (nixx.mkTasks { name = "e2e-circular"; } {
             circ_a = nixx.task { deps = [ "circ_b" ]; } (nixx.sh ''export CIRC_A=1'');
@@ -286,6 +323,7 @@
           e2e-strict = e2eStrict;
           e2e-combo = e2eCombo;
           e2e-edge = e2eEdge;
+          e2e-global-env = e2eGlobalEnv;
           e2e-circular = e2eCircular;
         };
       });
