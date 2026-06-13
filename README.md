@@ -1,4 +1,4 @@
-# nixx — raw shell (and node, python, perl, …) inside pure Nix, no `${}` tax
+# nixx — Write real shell, JavaScript, Python, and TypeScript inside Nix — without escaping ${}.
 
 One `with`, and a `${VAR}` in a script body is the **shell's**, not Nix's —
 read from source, never escaped. No preprocessor, no codegen; files stay valid
