@@ -3,12 +3,12 @@
 The [README](./README.md) covers the headline: raw shell (and the rest of the
 `${}` family) inside pure Nix via `with nixx.for pkgs;`, the three dev-shell
 idioms, and the task runner. This file is everything else — the multi-language
-builders, `runApplication`, dependency wiring, option tables, interpolation
+builders, `mkApps`, dependency wiring, option tables, interpolation
 markers, the linter source-mapping, and the repo's own dev commands.
 
 ## Language constructors
 A block carries its own language as `__lang`; pick the constructor that reads
-naturally, and `runApplication` dispatches to the right builder.
+naturally, and `mkApps` dispatches to the right builder.
 
 | constructor | language | deps | lint/gate | `${}` tax (plain `''…''`)* |
 |---|---|---|---|---|
@@ -22,42 +22,50 @@ naturally, and `runApplication` dispatches to the right builder.
 | `nixx.ruby` `nixx.lua` | resp. | — | pluggable | none |
 
 \* This column is the tax **only** when a body is *evaluated* (a standalone
-`mkScript`, or a `runApplication` block). Bodies passed to `mkTasks`/`mkScripts`
-are read from source, so they pay **zero** — see the README. Python/Ruby/Lua and
-TS *type syntax* never use `${}` interpolation, so they never pay either way.
+`mkScript`, or legacy `mkApp`/`runApplication` direct-block form). Bodies passed
+as attr values to `mkApps`, `mkTasks`, or `mkScripts` are read from source, so
+they pay **zero** — see the README. Python/Ruby/Lua and TS *type syntax* never
+use `${}` interpolation, so they never pay either way.
 
 ## The one rule (only when a body is evaluated)
 `'' ''` is evaluated by Nix before nixx runs, so inside an **evaluated** body a
 shell `${` must be written `''${` and a literal `''` must be written `'''`. This
-is exactly the tax the source-read path (README) removes for tasks/scripts. It
-still applies to `runApplication` blocks and standalone `mkScript`, because those
-have no literal attrset position to read from. For those, either escape, or pass
-Nix values with the `@nix(…)` markers below.
+is exactly the tax the source-read path removes for apps/tasks/scripts. It still
+applies to standalone `mkScript` and legacy direct-block `mkApp` /
+`runApplication`, because those have no literal attrset position to read from.
+For those, either escape, or pass Nix values with the `@nix(…)` markers below.
 
-## `runApplication` — build a shippable store binary
-ONE entry point. Reads the block's `__lang` and dispatches to the matching
-builder; the result is a `/nix/store/.../bin/<name>` executable.
+## `mkApps` — build shippable store binaries
+Reads each block's `__lang` and dispatches to the matching builder; the result
+is an attrset of `/nix/store/.../bin/<name>` executables. Attr names become
+binary names, and bodies are source-read.
 
 ```nix
-let inherit (inputs.nixx.writers pkgs) runApplication; nixx = inputs.nixx.lib; in {
-  deploy = runApplication { name = "deploy"; runtimeInputs = [ pkgs.rsync ]; } (nixx.sh ''
-    rsync -a ./dist/ "$HOST:/srv/"      # raw bash, */ and $VAR work
+with inputs.nixx.for pkgs;
+mkApps { } {
+  deploy = app { runtimeInputs = [ pkgs.rsync ]; } (bash ''
+    echo "deploying from ${PWD}"
+    rsync -a ./dist/ "$HOST:/srv/"
   '');
 
-  report = runApplication { name = "report"; deps = [ "rich>=13" ]; } (nixx.uv ''
-    from rich import print              # zero ${} tax in python
-    print("[bold green]done[/]")        # rich auto-resolved by uv
+  report = app { deps = [ "rich>=13" ]; } (uv ''
+    from rich import print
+    print("[bold green]done[/]")
   '');
 
-  check = runApplication { name = "check"; compile = true; } (nixx.ts ''
-    interface R { ok: boolean }         # TS types: no ${} tax
+  check = app { compile = true; } (bun ''
+    interface R { ok: boolean }
     const r: R = { ok: true };
-    console.log(`status: ''${r.ok}`);    # evaluated body → template literal needs ''${}
+    console.log(`status: ${r.ok}`);
   '');
 }
 ```
 
 - `bun --compile` → a self-contained store binary.
+- `app { ... } block` attaches per-binary options such as `runtimeInputs`,
+  `projectRoot`, `deps`, or `compile`.
+- `mkApp` remains as a singleton helper; `runApplication` is a deprecated alias
+  kept for compatibility.
 - low-level builders in `writers.nix`: `writeBashApplication`,
   `writeUvApplication`, `writeBunApplication`, `writeNodeApplication`,
   `writeTsxApplication`, `writeDenoApplication`.
@@ -69,10 +77,13 @@ there's a single source of truth and no drift:
 
 ```nix
 # preferred: deps come from the project's own manifest
-runApplication { name = "report"; projectRoot = ./.; } (nixx.uv ''
-  from rich import print          # rich resolved from ./pyproject.toml + uv.lock
-  print("hello")
-'')
+with inputs.nixx.for pkgs;
+mkApps { } {
+  report = app { projectRoot = ./.; } (uv ''
+    from rich import print          # rich resolved from ./pyproject.toml + uv.lock
+    print("hello")
+  '');
+}
 
 # the project dir is imported into the store; the launcher runs
 #   uv run --frozen --project <stored> main.py
@@ -217,7 +228,7 @@ A runnable example **per language** lives in `examples/simple01`:
 
 ```
 cd examples/simple01
-nix run .#status      # bash   (runApplication + runtimeInputs)
+nix run .#status      # bash   (mkApps + runtimeInputs)
 nix run .#report      # python (uv, deps from ./py via projectRoot)
 nix run .#validate    # ts     (bun --compile, deps from ./ts)
 nix run .#tasks -- check   # mkTasks runner: report + validate (just-style deps)
@@ -230,6 +241,6 @@ nix run .#tasks -- check   # mkTasks runner: report + validate (just-style deps)
 4. ✅ linter diagnostics remapped to exact `.nix` line:col
 5. ✅ multi-language via constructors (bash/python/uv/bun/ts/node/deno/perl)
 6. ✅ `bun --compile` → self-contained store binary
-7. ✅ `runApplication` single dispatcher + one runnable app per language in
+7. ✅ `mkApps` dispatcher + one runnable app per language in
    `examples/simple01`
 8. ✅ source-read `${}`-tax-free task/script bodies (175+ unit tests)

@@ -40,14 +40,14 @@
       let
         pkgs = import nixpkgs { inherit system; };
         nixx = lib;
-        inherit (writersFor pkgs) runApplication;
+        inherit (writersFor pkgs) mkApps;
 
         # Pure-Nix lib tests, evaluated at flake-eval time.
         # A failing assertion throws here and prevents the flake from building.
-        # The resulting script is shellcheck-gated via nixx's own runApplication.
+        # The resulting script is shellcheck-gated via nixx's own mkApps.
         libTests =
           let ok = import ./tests/lib-tests.nix;
-          in runApplication { name = "test"; } (nixx.sh "echo ${nixx.shq ok}\n");
+          in (mkApps { } { test = nixx.sh "echo ${nixx.shq ok}\n"; }).test;
 
         # ---- e2e stress tests (inline, shared logic with examples/shell-hell-e2e) ----
         mkE2e = name: runner:

@@ -19,6 +19,13 @@
     flake-utils.lib.eachDefaultSystem (system:
       with nixx.for nixpkgs.legacyPackages.${system};
       let
+        apps = mkApps { } {
+          envcheck = app { runtimeInputs = [ pkgs.jq ]; } (bash ''
+            jq --version
+            echo "shell user=${USER}"
+          '');
+        };
+
         tasks = mkTasks { name = "tasks"; } {
           build = task { description = "Build (raw bash)"; } (bash ''
             out="${OUT_DIR:-dist}"
@@ -41,7 +48,9 @@
         }).tasks.hook.text;
       in
       {
-        packages.default = tasks.runner;
+        packages = apps // {
+          default = tasks.runner;
+        };
 
         # YOUR mkShell, untouched — extendShell just folds the runner + its
         # tab-completion in via inputsFrom.

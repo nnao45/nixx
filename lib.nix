@@ -265,7 +265,7 @@ let
     if ks == [ ] then text else replaceStrings froms tos text;
 
   # ---- block constructors ----
-  # A block carries its language as `__lang`, so a single runApplication can
+  # A block carries its language as `__lang`, so mkApps can
   # dispatch to the right builder. `mkBlock` is the shared core; the named
   # constructors below are sugar so the language reads naturally at the call
   # site: `nixx.bun ''...''`, `nixx.py ''...''`, etc.
@@ -323,6 +323,10 @@ let
       group = opts.group or null; # group label for --list display
     };
 
+  app = opts: blk:
+    assert (blk.__sh or false) || throw "nixx.app: second arg must be a nixx block (e.g. nixx.sh ''...'')";
+    blk // { __appOptions = opts; };
+
   normalize = v:
     if isAttrs v && (v.__sh or false) then v
     else throw "nixx: value must be a nixx block (e.g. nixx.sh ''...'', nixx.bun ''...'')";
@@ -343,7 +347,7 @@ let
     if raw == null then b
     else
       let d = dedentInfo raw; in
-      b // { text = d.text; rawBody = raw; inherit (d) indent; };
+      b // { inherit (d) text indent; rawBody = raw; };
 
   # ---- runner generation ----
   # defaultDeps: task names run before EVERY task (except the default-dep tasks
@@ -685,6 +689,6 @@ let
 in
 {
   inherit sh bash py uv bun ts node deno perl ruby lua mkBlock
-    task mkTasks mkScript mkScripts shq dedent langProfiles
+    task app mkTasks mkScript mkScripts shq dedent langProfiles
     runtimeScope;
 }

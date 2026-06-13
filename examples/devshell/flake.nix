@@ -20,6 +20,13 @@
     flake-utils.lib.eachDefaultSystem (system:
       with nixx.for nixpkgs.legacyPackages.${system};
       let
+        apps = mkApps { } {
+          whereami = bash ''
+            echo "app cwd=${PWD}"
+            echo "app user=${USER}"
+          '';
+        };
+
         tasks = mkTasks { name = "tasks"; } {
           # bash — ${HOME} / ${PWD} are RAW, no '' prefix.
           info = task { description = "Show where we are"; } (bash ''
@@ -42,8 +49,10 @@
       in
       {
         # `nix run .#tasks -- info`  works from anywhere.
-        packages.default = tasks.runner;
-        packages.tasks = tasks.runner;
+        packages = apps // {
+          default = tasks.runner;
+          tasks = tasks.runner;
+        };
 
         # `nix develop` → the `tasks` command is on PATH, tab-completed.
         #   $ tasks            # list

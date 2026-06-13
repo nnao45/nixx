@@ -26,6 +26,13 @@
       in
       with nx;
       let
+        apps = mkApps { } {
+          hello = bash ''
+            echo "devenv app for ${USER}"
+            echo "cwd=${PWD}"
+          '';
+        };
+
         # `tasks <name>` inside `devenv shell`.
         tasks = mkTasks { name = "tasks"; } {
           fmt = task { description = "Format (raw bash)"; } (bash ''
@@ -49,7 +56,9 @@
         };
       in
       {
-        packages.default = tasks.runner;
+        packages = apps // {
+          default = tasks.runner;
+        };
 
         devShells.default = devenv.lib.mkShell {
           inherit inputs pkgs;

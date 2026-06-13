@@ -5,41 +5,45 @@ read from source, never escaped. No preprocessor, no codegen; files stay valid
 `.nix`, so nil/nixd never error.
 
 ```nix
-with nixx.for pkgs;                     # lib + writers + pkgs, all un-prefixed
-(mkTasks { } {
-  dev  = bash ''
-    echo ${HOME}                       # no ''${ } — read from source, not evaluated
-    npm run dev -- --port ${PORT}
-  '';
-  ci   = node ''
-    console.log(`building for ${process.env.NODE_ENV}`);
-  '';
-}).devShell
+{
+  packages = with nixx.for pkgs; mkApps { } {
+    deploy = app { runtimeInputs = [ pkgs.rsync ]; } (bash ''
+      echo ${HOME}                     # no ''${ } — read from source, not evaluated
+      rsync -a ./dist/ "$HOST:/srv/"
+    '');
+    ci = node ''
+      console.log(`building for ${process.env.NODE_ENV}`);
+    '';
+  };
+}
 ```
 
-`nix develop`, and you have a tab-completed `tasks dev` / `tasks ci`.
+`nix run .#deploy`, and you have a shippable `/nix/store/.../bin/deploy`.
+Use `mkTasks` when you want a tab-completed `tasks build` / `tasks check`
+workflow.
 
 **Add to your flake:**
 ```nix
 inputs.nixx.url = "github:nnao45/nixx";
 # in a per-system output, with `pkgs` in scope:
-#   with inputs.nixx.for pkgs; (mkTasks { } { dev = bash ''…''; }).devShell
+#   { packages = with inputs.nixx.for pkgs; mkApps { } { hello = bash ''…''; }; }
 ```
 
 > Also speaks python (uv), typescript (bun/tsx), node, deno, perl, ruby, lua —
-> and builds shippable store binaries with `runApplication`. Full reference,
+> and bundles dev workflows with `mkTasks`. Full reference,
 > dependency wiring, and option tables in **[API.md](./API.md)**.
 
 ## `${}` — what's raw, what's constrained
-Every body passed to `mkTasks` / `mkScripts` is read **from source** instead of
-evaluated, so a `${VAR}` in the `${}` family — shell `${HOME}`, a JS template
-`` `${x}` ``, a perl `${name}` — survives verbatim with **no `''` prefix**. The
-one line of ceremony is the `with` (`nixx.for pkgs`, or just `nixx.runtimeScope`
-for the deferral alone): any `with` makes the scope dynamic, which defers Nix's
-static undefined-variable check to a runtime that never arrives (the body is
-never forced). To splice in an actual **Nix** value, use the `@nix(x)` /
-`@sh:q(x)` markers — native Nix `${…}` does not run in a source-read body, by
-design: `${}` belongs to the language.
+Every body passed as an attr value to `mkApps`, `mkTasks`, or `mkScripts` is
+read **from source** instead of evaluated, so a `${VAR}` in the `${}` family —
+shell `${HOME}`, a JS template `` `${x}` ``, a perl `${name}` — survives
+verbatim with **no `''` prefix**. The one line of ceremony is the `with`
+(`nixx.for pkgs`, or just `nixx.runtimeScope` for the deferral alone): any
+`with` makes the scope dynamic, which defers Nix's static undefined-variable
+check to a runtime that never arrives (the body is never forced). To splice in
+an actual **Nix** value, use the `@nix(x)` / `@sh:q(x)` markers — native Nix
+`${…}` does not run in a source-read body, by design: `${}` belongs to the
+language.
 
 The common shell forms work with zero prefix; a few aren't valid Nix inside
 `${…}`, so Nix rejects them at *parse* time (before any source read) and they
@@ -61,23 +65,60 @@ programmatic guard — in [API.md](./API.md).)
 `with` on the flake output that builds your tasks; evaluated code still errors
 clearly at runtime.
 
+## Apps and shells
+`mkApps` builds store binaries. `mkTasks` builds a just-style runner for local
+workflows. They compose: put app derivations in `vars`, then call them from
+tasks with `@nix(name)`.
+
+```nix
+with nixx.for pkgs;
+let
+  apps = mkApps { } {
+    status = bash ''echo "${USER} in ${PWD}"'';
+    report = app { deps = [ "rich" ]; } (uv ''
+      from rich import print
+      print("[green]ok[/]")
+    '');
+  };
+  tasks = mkTasks { name = "tasks"; vars = apps; } {
+    check = bash ''
+      status="@nix(status)"
+      report="@nix(report)"
+      "$status/bin/status"
+      "$report/bin/report"
+    '';
+  };
+in { packages = apps // { default = tasks.runner; tasks = tasks.runner; }; }
+```
+
 ## devShell / devenv / mkShell — pick your idiom
-Same `with nixx.for pkgs;`, same zero-`${}`-tax bodies; only the last line of
-wiring differs. Runnable flakes in `examples/`.
+Same `with nixx.for pkgs;`, same zero-`${}`-tax bodies; only the wiring differs.
+Runnable flakes in `examples/`. These examples expose a small `mkApps` binary
+under `packages` and put the `tasks` runner in the shell.
 
 **Plain flake `devShells.default`** (`examples/devshell`) — zero-config:
 ```nix
 with nixx.for pkgs;
-let tasks = mkTasks { name = "tasks"; } {
-  info = task { description = "where am I"; } (bash ''echo ${PWD} as ${USER}'');
-}; in { devShells.default = tasks.devShell; }     # `tasks` on PATH, tab-completed
+let
+  apps = mkApps { } { whereami = bash ''echo ${PWD} as ${USER}''; };
+  tasks = mkTasks { name = "tasks"; } {
+    info = bash ''echo ${PWD} as ${USER}'';
+  };
+in {
+  packages = apps // { default = tasks.runner; tasks = tasks.runner; };
+  devShells.default = tasks.devShell;          # `tasks` on PATH, tab-completed
+}
 ```
 
 **Hand-rolled `pkgs.mkShell`** (`examples/mkshell`) — you keep full control;
 `extendShell` folds the runner + completion into *your* shell:
 ```nix
 with nixx.for pkgs;
-let tasks = mkTasks { name = "tasks"; } { build = bash ''echo ${OUT_DIR:-dist}''; }; in {
+let
+  apps = mkApps { } { envcheck = app { runtimeInputs = [ pkgs.jq ]; } (bash ''jq --version''); };
+  tasks = mkTasks { name = "tasks"; } { build = bash ''echo ${OUT_DIR:-dist}''; };
+in {
+  packages = apps // { default = tasks.runner; };
   devShells.default = tasks.extendShell (pkgs.mkShell {
     packages  = [ pkgs.jq pkgs.ripgrep ];
     # even the hook is ${}-tax-free — it's a nixx body's .text:
@@ -93,13 +134,17 @@ otherwise pay the `${}` tax):
 ```nix
 with nixx.for pkgs;
 let
+  apps   = mkApps { } { hello = bash ''echo "ready, ${USER}"''; };
   tasks  = mkTasks { name = "tasks"; } { fmt = bash ''echo ${PWD}''; };
   bodies = mkTasks { } { enter = bash ''echo "ready, ${USER}"''; };
-in devenv.lib.mkShell {                 # + inherit inputs pkgs; — see examples/devenv
-  modules = [{
-    packages   = [ tasks.runner ];
-    enterShell = bodies.tasks.enter.text;   # a Nix string, yet ${USER} stays raw
-  }];
+in {
+  packages = apps // { default = tasks.runner; };
+  devShells.default = devenv.lib.mkShell {  # + inherit inputs pkgs; — see examples/devenv
+    modules = [{
+      packages   = [ tasks.runner ];
+      enterShell = bodies.tasks.enter.text; # a Nix string, yet ${USER} stays raw
+    }];
+  };
 }
 ```
 
@@ -127,7 +172,7 @@ $ tasks build
 pure (no-pkgs) `nixx.mkTasks` → [API.md](./API.md).
 
 ## More
-- **Multi-language & shippable binaries** — `runApplication`, the constructor
+- **Multi-language & shippable binaries** — `mkApps`, `app`, `mkApp`, the constructor
   table, `projectRoot` dependency wiring, `mkScript(s)`, `vars` markers:
   **[API.md](./API.md)**.
 - **Linter source-mapping** — blocks carry their source position, so
