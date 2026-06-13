@@ -23,9 +23,7 @@ rec {
   #
   # Or merge the runner into an existing shell (task names are tab-completed):
   #
-  #   devShells.default = tasks.withShell (pkgs.mkShell { packages = [ nodejs ]; });
-  #
-  # `extendShell` is an alias for `withShell` (kept for backward compatibility).
+  #   devShells.default = tasks.extendShell (pkgs.mkShell { packages = [ nodejs ]; });
   #
   # `runner` is a pkgs.writeShellApplication derivation (shellcheck-gated).
   # All per-task `requirements` packages are passed as runtimeInputs so
@@ -56,14 +54,13 @@ rec {
         packages = [ runner ];
         shellHook = completionHook;
       };
-      withShell = shell: pkgs.mkShell {
+      extendShell = shell: pkgs.mkShell {
         inputsFrom = [ shell ];
         packages = [ runner ];
         shellHook = completionHook;
       };
-      extendShell = withShell;
     in {
-      inherit runner devShell withShell extendShell;
+      inherit runner devShell extendShell;
       tasks = result.tasks;
       meta = result.meta;
     };
