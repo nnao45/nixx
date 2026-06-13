@@ -129,18 +129,45 @@
         }) (builtins.removeAttrs packages [ "default" ])
         // { default = apps.report; };
 
+        # nix fmt — format all Nix files in the repo
+        formatter = pkgs.nixpkgs-fmt;
+
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.uv pkgs.ruff pkgs.bun pkgs.nodejs
-            pkgs.shellcheck pkgs.nixpkgs-fmt
+            pkgs.shellcheck pkgs.nixpkgs-fmt pkgs.statix
           ];
           shellHook = ''
             echo "nixx dev shell — uv $(uv --version 2>/dev/null), bun $(bun --version 2>/dev/null)"
-            echo "run tests: nix run .#test"
+            echo "run tests:  nix run .#test"
+            echo "format:     nix fmt"
+            echo "lint (nix): statix check ."
           '';
         };
 
-        # nix flake check — all example apps + lib unit tests
-        checks = packages // { lib-tests = libTests; };
+        # nix flake check — example apps + lib tests + Nix lint/format
+        checks = packages // {
+          lib-tests = libTests;
+
+          # verify all .nix files in the repo are formatted
+          nix-fmt = pkgs.runCommand "check-nix-fmt"
+            { nativeBuildInputs = [ pkgs.nixpkgs-fmt ]; }
+            ''
+              nixpkgs-fmt --check \
+                ${./flake.nix} \
+                ${./lib.nix} \
+                ${./writers.nix} \
+                ${./tests/lib-tests.nix}
+              touch $out
+            '';
+
+          # static analysis of Nix expressions
+          statix = pkgs.runCommand "check-statix"
+            { nativeBuildInputs = [ pkgs.statix ]; }
+            ''
+              statix check ${./.}
+              touch $out
+            '';
+        };
       });
 }
