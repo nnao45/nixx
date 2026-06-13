@@ -90,13 +90,23 @@ devShell helpers:
 let
   nixx    = inputs.nixx.lib;
   writers = inputs.nixx.writers pkgs;
-  tasks   = writers.mkTasks { name = "tasks"; defaultDeps = [ "nixenv" ]; } {
+  tasks   = writers.mkTasks {
+    name        = "tasks";
+    defaultDeps = [ "nixenv" ];
+    env         = { CI = "true"; };          # exported in every task
+  } {
     # runs before EVERY task → no more --extra-experimental-features … each time
     nixenv = nixx.sh ''export NIX_CONFIG="experimental-features = nix-command flakes"'';
     build  = nixx.task { description = "Build the project"; } (nixx.sh ''nix build'');
     test   = nixx.task { description = "Run the test suite"; } (nixx.sh ''nix run .#test'');
-    deploy = nixx.task { description = "Deploy production"; } (nixx.sh ''aws s3 sync ...'');
-    check  = nixx.task { deps = [ "build" ]; } (nixx.sh ''
+    deploy = nixx.task {
+      description  = "Deploy production";
+      group        = "release";
+      env          = { DEPLOY_ENV = "prod"; };  # merged with global; per-task wins on conflict
+      requirements = [ pkgs.awscli2 ];
+      cwd          = ./infra;
+    } (nixx.sh ''aws s3 sync ...'');
+    check  = nixx.task { deps = [ "build" ]; strict = true; } (nixx.sh ''
       echo ok
     '');
   };
@@ -112,12 +122,13 @@ After `nix develop`, the `tasks` command is available directly:
 
 ```
 $ tasks --list
-available tasks:
   build    Build the project
   check
-  deploy   Deploy production
   nixenv
   test     Run the test suite
+
+release:
+  deploy   Deploy production
 
 $ tasks build
 ```
@@ -137,15 +148,27 @@ runner script text:
 (nixx.mkTasks { name = "tasks"; } { ... }).runner  # → bash script string
 ```
 
-- **`description`** (on `nixx.task`) — a one-line summary shown by `--list`.
-  Tasks without one are still listed by name. Also exposed programmatically on
-  `(mkTasks ...).tasks.<name>.description` and each `(mkTasks ...).meta` entry.
-- **`deps`** (on `nixx.task`) — prerequisite *tasks*, run once each before the body
-  (renamed from `needs`).
-- **`requirements`** (on `nixx.task`) — *packages* whose `/bin` join `PATH`
-  (renamed from the old `deps`).
-- **`defaultDeps`** (on `mkTasks`) — tasks prepended to every task's `deps`;
-  the default-dep tasks themselves are exempt (no self-loop).
+#### `mkTasks` options
+
+| option | default | description |
+|---|---|---|
+| `name` | `"tasks"` | name embedded in runner comments |
+| `vars` | `{}` | Nix values interpolated via `@nix(…)` / `@sh:q(…)` markers |
+| `env` | `{}` | attrset exported as shell env vars in **every** task; per-task `env` overrides on conflict |
+| `defaultDeps` | `[]` | task names prepended to every task's deps; the default-dep tasks themselves are exempt |
+
+#### `nixx.task` options
+
+| option | default | description |
+|---|---|---|
+| `description` | `null` | one-line summary shown by `--list`; also on `.tasks.<name>.description` and `.meta` |
+| `group` | `null` | groups tasks under a header in `--list` output |
+| `deps` | `[]` | prerequisite task names run (once each) before this body |
+| `requirements` | `[]` | packages whose `/bin` join `PATH` for this task |
+| `env` | `{}` | attrset of shell env vars exported before the body; merged with global `mkTasks env`, this wins on conflict |
+| `cwd` | `null` | working directory (`cd` to this path before the body runs) |
+| `strict` | `false` | prepend `set -euo pipefail` to a bash task body |
+
 - low-level builders in `writers.nix`: `writeBashApplication`,
   `writeUvApplication`, `writeBunApplication`, `writeNodeApplication`
 
