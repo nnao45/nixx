@@ -140,6 +140,17 @@
 
         # ---- checks: `nix flake check` lints every example via nixx-check ----
         # Each app already gates itself at build time; this is an extra pass.
-        checks = packages;
+        checks = packages // {
+          # Pure-Nix unit tests for lib.nix.
+          # Evaluated at nix eval / nix flake check time; a failing test throws and
+          # aborts evaluation.  The derivation just records the "ALL N TESTS PASSED"
+          # string so `nix build .#checks.*.lib-tests` has a concrete output.
+          lib-tests =
+            let result = import ./tests/lib-tests.nix;
+            in pkgs.runCommand "nixx-lib-tests" {} ''
+              mkdir -p $out
+              echo ${builtins.toJSON result} > $out/result
+            '';
+        };
       });
 }
