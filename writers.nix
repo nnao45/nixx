@@ -306,8 +306,13 @@ rec {
       '';
       installPhase = ''
         runHook preInstall
-        mkdir -p "$out/bin"
-        cp prog.ts "$out/bin/${name}"
+        mkdir -p "$out/bin" "$out/share/${name}"
+        # strip the shebang line; tsx receives a named .ts file so it type-strips correctly
+        tail -n +2 prog.ts > "$out/share/${name}/main.ts"
+        cat > "$out/bin/${name}" <<LAUNCH
+        #!${pkgs.runtimeShell}
+        exec ${pkgs.tsx}/bin/tsx "$out/share/${name}/main.ts" "\$@"
+        LAUNCH
         chmod +x "$out/bin/${name}"
         wrapProgram "$out/bin/${name}" \
           --prefix PATH : ${binPath} \
@@ -349,8 +354,13 @@ rec {
       '';
       installPhase = ''
         runHook preInstall
-        mkdir -p "$out/bin"
-        cp prog.ts "$out/bin/${name}"
+        mkdir -p "$out/bin" "$out/share/${name}"
+        # strip the shebang line; deno receives a named .ts file so it parses as TypeScript
+        tail -n +2 prog.ts > "$out/share/${name}/main.ts"
+        cat > "$out/bin/${name}" <<LAUNCH
+        #!${pkgs.runtimeShell}
+        exec ${pkgs.deno}/bin/deno run -A "$out/share/${name}/main.ts" "\$@"
+        LAUNCH
         chmod +x "$out/bin/${name}"
         wrapProgram "$out/bin/${name}" --prefix PATH : ${binPath}
         runHook postInstall
