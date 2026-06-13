@@ -126,16 +126,25 @@ available tasks:
   (reproducible; exec bit preserved)
 
 ## flake usage
-This repo's `flake.nix` ships one example per language:
+This repo's root `flake.nix` is the library itself plus its own checks:
 
 ```
-nix build .#greet      # bash   (writeShellApplication + runtimeInputs)
-nix build .#report     # python (uv inline deps, ruff gate)
-nix build .#validate   # ts     (bun --compile, self-contained binary)
-nix build .#ping       # node
-nix run   .#report     # run any of them
-nix develop            # shell with uv/ruff/bun/node/shellcheck
-nix flake check        # build (and thereby gate) every example
+nix run   .#test                  # pure-Nix lib unit tests (tests/lib-tests.nix)
+nix run   .#nix-tasks -- --list   # list this repo's lint/format tasks
+nix run   .#nix-tasks -- check    # fmt-check + statix + nixf (a mkTasks runner)
+nix develop                       # uv ruff bun node shellcheck nixpkgs-fmt statix nixf jq
+nix flake check                   # lib tests + nix-tasks + e2e task runners (all gated)
+```
+
+A runnable example **per language** lives in `examples/simple01` (it consumes
+nixx as a flake input):
+
+```
+cd examples/simple01
+nix run .#status      # bash   (runApplication + runtimeInputs)
+nix run .#report      # python (uv, deps from ./py via projectRoot)
+nix run .#validate    # ts     (bun --compile, deps from ./ts)
+nix run .#tasks -- check   # mkTasks runner: report + validate (just-style deps)
 ```
 
 Consume it elsewhere:
@@ -145,11 +154,14 @@ inputs.nixx.url = "github:you/nixx";
 ```
 
 ## Tooling
-- **Lint with source mapping**: `./nixx-check file.nix [attr]` runs the right
-  linter per block (`bash`→shellcheck, `python`→ruff) and maps each diagnostic
-  back to the ORIGINAL `.nix` `line:col` (via `unsafeGetAttrPos` + source read
-  + common-indent column correction). Exact for nested indentation.
-- **LSP**: zero errors (valid Nix).  **Highlight**: `injections.scm` (nvim).
+- **Source-mapping for linters**: `mkTasks` / `mkScripts` return a `meta` list
+  (per block: `name`, `file`, `line`, `indent` — plus `lang` for `mkScripts`)
+  built from `unsafeGetAttrPos` + source read + common-indent column
+  correction. A linter wrapper can feed each block to the right tool
+  (`bash`→shellcheck, `python`→ruff) and remap every diagnostic back to the
+  ORIGINAL `.nix` `line:col` — exact even under nested indentation.
+- **LSP**: zero errors — files stay valid Nix, so nil/nixd never choke on the
+  script bodies.
 
 ## Status — proven end-to-end in a real Nix
 1. ✅ shellcheck / ruff / bun build gates (bad code fails the build)
@@ -158,4 +170,6 @@ inputs.nixx.url = "github:you/nixx";
 4. ✅ linter diagnostics remapped to exact `.nix` line:col
 5. ✅ multi-language via constructors (bash/python/uv/bun/ts/node)
 6. ✅ `bun --compile` → self-contained store binary
-7. ✅ `runApplication` single dispatcher + `flake.nix` with one app per language
+7. ✅ `runApplication` single dispatcher + one runnable app per language in
+   `examples/simple01` (root `flake.nix` ships the lib, its unit tests, and
+   `mkTasks`-based lint/e2e runners)
