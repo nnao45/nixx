@@ -36,9 +36,13 @@ rec {
       writeBunApplication ((pick (common ++ [ "projectRoot" "compile" ])) // { inherit block; })
     else if lang == "node" then
       writeNodeApplication ((pick (common ++ [ "projectRoot" "nodeModules" "syntaxCheck" ])) // { inherit block; })
+    else if lang == "typescript" then
+      writeTsxApplication ((pick (common ++ [ "nodeModules" ])) // { inherit block; })
+    else if lang == "deno" then
+      writeDenoApplication ((pick common) // { inherit block; })
     else
       throw ("nixx.runApplication: no builder for lang '" + lang + "' "
-        + "(have: bash, python-uv, bun, node)");
+        + "(have: bash, python-uv, bun, node, typescript, deno)");
 
   # writeUvApplication — Python via uv, built to /nix/store/<hash>/bin/<name>.
   #
@@ -263,6 +267,92 @@ rec {
           wrapProgram "$out/bin/${name}" --prefix PATH : ${binPath} \
             ${lib.optionalString useProject "--set NODE_PATH ${storedProject}/node_modules"}
         ''}
+        runHook postInstall
+      '';
+      meta.mainProgram = name;
+    };
+
+  # writeTsxApplication — TypeScript via tsx (Node + TS stripping), built to a
+  # store-path executable. Deps supplied by Nix via `nodeModules`; tsx runs the
+  # .ts file directly with no compile step (closest analog to writeNodeApplication).
+  #   writeTsxApplication {
+  #     name = "tool";
+  #     nodeModules = (pkgs.buildNpmPackage { ... });
+  #     block = nixx.ts ''  const x: number = 1; console.log(x);  '';
+  #   }
+  writeTsxApplication =
+    { name
+    , block
+    , vars ? { }
+    , nodeModules ? null
+    , runtimeInputs ? [ ]
+    }:
+    let
+      script = nixx.mkScript { lang = "typescript"; inherit vars; } block;
+      nodePath = lib.optionalString (nodeModules != null)
+        "${nodeModules}/lib/node_modules";
+      binPath = lib.makeBinPath ([ pkgs.tsx ] ++ runtimeInputs);
+    in
+    stdenv.mkDerivation {
+      inherit name;
+      dontUnpack = true;
+      passAsFile = [ "script" ];
+      inherit script;
+      nativeBuildInputs = [ pkgs.tsx pkgs.makeWrapper ];
+      buildPhase = ''
+        runHook preBuild
+        cp "$scriptPath" prog.ts
+        runHook postBuild
+      '';
+      installPhase = ''
+        runHook preInstall
+        mkdir -p "$out/bin"
+        cp prog.ts "$out/bin/${name}"
+        chmod +x "$out/bin/${name}"
+        wrapProgram "$out/bin/${name}" \
+          --prefix PATH : ${binPath} \
+          ${lib.optionalString (nodeModules != null) "--set NODE_PATH ${nodePath}"}
+        runHook postInstall
+      '';
+      meta.mainProgram = name;
+    };
+
+  # writeDenoApplication — TypeScript/JS via deno, built to a store-path
+  # executable. Supports inline deps via npm:/jsr: import specifiers.
+  #   writeDenoApplication {
+  #     name = "tool";
+  #     block = nixx.deno ''
+  #       import { bold } from "jsr:@std/fmt/colors";
+  #       console.log(bold("hello"));
+  #     '';
+  #   }
+  writeDenoApplication =
+    { name
+    , block
+    , vars ? { }
+    , runtimeInputs ? [ ]
+    }:
+    let
+      script = nixx.mkScript { lang = "deno"; inherit vars; } block;
+      binPath = lib.makeBinPath ([ pkgs.deno ] ++ runtimeInputs);
+    in
+    stdenv.mkDerivation {
+      inherit name;
+      dontUnpack = true;
+      passAsFile = [ "script" ];
+      inherit script;
+      nativeBuildInputs = [ pkgs.deno pkgs.makeWrapper ];
+      buildPhase = ''
+        runHook preBuild
+        cp "$scriptPath" prog.ts
+        runHook postBuild
+      '';
+      installPhase = ''
+        runHook preInstall
+        mkdir -p "$out/bin"
+        cp prog.ts "$out/bin/${name}"
+        chmod +x "$out/bin/${name}"
+        wrapProgram "$out/bin/${name}" --prefix PATH : ${binPath}
         runHook postInstall
       '';
       meta.mainProgram = name;

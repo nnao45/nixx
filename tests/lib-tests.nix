@@ -177,6 +177,12 @@ let
     }
 
     {
+      name = "langProfiles typescript: shebang";
+      got = lib.langProfiles.typescript.shebang;
+      expected = "#!/usr/bin/env tsx";
+    }
+
+    {
       name = "langProfiles bun: shebang";
       got = lib.langProfiles.bun.shebang;
       expected = "#!/usr/bin/env bun";
@@ -288,9 +294,9 @@ let
     }
 
     {
-      name = "ts: __lang=bun (alias)";
+      name = "ts: __lang=typescript";
       got = (lib.ts "console.log('hi')\n").__lang;
-      expected = "bun";
+      expected = "typescript";
     }
 
     {
@@ -366,6 +372,12 @@ let
       name = "mkScript bun: default shebang #!/usr/bin/env bun";
       got = firstLine (lib.mkScript { } (lib.bun "console.log('hi')\n"));
       expected = "#!/usr/bin/env bun";
+    }
+
+    {
+      name = "mkScript ts: default shebang #!/usr/bin/env tsx";
+      got = firstLine (lib.mkScript { } (lib.ts "console.log('hi')\n"));
+      expected = "#!/usr/bin/env tsx";
     }
 
     {
@@ -715,6 +727,12 @@ let
     {
       name = "mkTasks runner: bun body uses bun run - heredoc";
       got = contains "bun run - <<'" (lib.mkTasks { } { run = lib.bun "console.log('hi')\n"; }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: ts body uses tsx heredoc";
+      got = contains "tsx <<'" (lib.mkTasks { } { run = lib.ts "console.log('hi')\n"; }).runner;
       expected = true;
     }
 

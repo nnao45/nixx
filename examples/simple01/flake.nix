@@ -53,7 +53,7 @@
             name = "validate";
             projectRoot = ./ts;
             compile = true;
-          } (n.ts ''
+          } (n.bun ''
             import chalk from "chalk";
             const checks: [string, boolean][] = [
               ["python env",  true],
