@@ -144,7 +144,7 @@ let
     let d = dedentInfo body;
     in { __sh = true; __lang = lang;
          deps = []; env = {}; cwd = null;
-         text = d.text; indent = d.indent; rawBody = body; };
+         inherit (d) text indent; rawBody = body; };
 
   sh   = mkBlock "bash";        # bash (default)
   py   = mkBlock "python";      # python (lint: ruff)
@@ -334,8 +334,15 @@ let
   # python-uv, `deps`/`pythonReq` become a PEP 723 header that uv resolves.
   #   nixx.mkScript { lang = "python"; vars = { port = 3000; }; } (nixx.sh '' ... '')
   #   nixx.mkScript { lang = "python-uv"; deps = [ "requests" ]; } (nixx.sh '' ... '')
-  mkScript = { lang ? null, vars ? {}, shebang ? null, strict ? null
-             , runtimeInputs ? [], deps ? [], pythonReq ? null }: blk:-[p]
+  mkScript =
+    { lang ? null
+    , vars ? { }
+    , shebang ? null
+    , strict ? null
+    , runtimeInputs ? [ ]
+    , deps ? [ ]
+    , pythonReq ? null
+    }: blk:
     let
       b = normalize blk;
       # lang priority: explicit arg > block's own __lang tag > bash

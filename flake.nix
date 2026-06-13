@@ -15,11 +15,11 @@
       # System-independent outputs consumed by flake users:
       #   inputs.nixx.lib.bun ''...''
       #   inputs.nixx.writers pkgs
-      lib = lib;
+      inherit lib;
       writers = writersFor;
 
       overlays.default = final: prev: {
-        nixx = { lib = lib; writers = writersFor final; };
+        nixx = { inherit lib; writers = writersFor final; };
       };
     }
     //
@@ -119,6 +119,34 @@
           # lib unit tests — nix run .#test
           test = libTests;
 
+          # Nix lint/format task runner (shellcheck-gated via writeShellApplication)
+          # nix run .#nix-tasks -- fmt        auto-format all .nix files
+          # nix run .#nix-tasks -- fmt-check  verify formatting (CI)
+          # nix run .#nix-tasks -- lint       statix static analysis
+          # nix run .#nix-tasks -- check      fmt-check + lint
+          nix-tasks =
+            let
+              runner = (nixx.mkTasks { name = "nix-tasks"; } {
+                fmt = nixx.sh ''
+                  nixpkgs-fmt flake.nix lib.nix writers.nix tests/lib-tests.nix
+                '';
+                fmt-check = nixx.sh ''
+                  nixpkgs-fmt --check flake.nix lib.nix writers.nix tests/lib-tests.nix
+                '';
+                lint = nixx.sh ''
+                  statix check .
+                '';
+                check = nixx.task { needs = [ "fmt-check" "lint" ]; } (nixx.sh ''
+                  echo "all nix checks passed"
+                '');
+              }).runner;
+            in
+            pkgs.writeShellApplication {
+              name = "nix-tasks";
+              runtimeInputs = [ pkgs.nixpkgs-fmt pkgs.statix ];
+              text = runner;
+            };
+
           default = packages.report;
         };
 
@@ -129,18 +157,26 @@
         }) (builtins.removeAttrs packages [ "default" ])
         // { default = apps.report; };
 
+        # nix fmt — format all Nix files in the repo
+        formatter = pkgs.nixpkgs-fmt;
+
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.uv pkgs.ruff pkgs.bun pkgs.nodejs
-            pkgs.shellcheck pkgs.nixpkgs-fmt
+            pkgs.shellcheck pkgs.nixpkgs-fmt pkgs.statix
           ];
           shellHook = ''
             echo "nixx dev shell — uv $(uv --version 2>/dev/null), bun $(bun --version 2>/dev/null)"
-            echo "run tests: nix run .#test"
+            echo "run tests:   nix run .#test"
+            echo "format:      nix fmt"
+            echo "lint/format: nix run .#nix-tasks -- check"
           '';
         };
 
-        # nix flake check — all example apps + lib unit tests
-        checks = packages // { lib-tests = libTests; };
+        # nix flake check — example apps + lib tests + nix-tasks (shellcheck-gated)
+        checks = packages // {
+          lib-tests = libTests;
+          nix-tasks = packages.nix-tasks;
+        };
       });
 }
