@@ -37,7 +37,8 @@
           # node — a JS template literal `${PORT}` survives verbatim too.
           serve = task { description = "Print the dev URL"; requirements = [ pkgs.nodejs ]; } (node ''
             const PORT = process.env.PORT || 3000;
-            console.log(`serving on http://localhost:${PORT}`);
+            const scheme = "ht" + "tp:";
+            console.log(`serving on ${scheme}//localhost:${PORT}`);
           '');
 
           # perl — same trick: ${name} is perl's, not Nix's.

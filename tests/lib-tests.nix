@@ -835,9 +835,9 @@ let
       name = "mkTasks: description surfaced in .meta";
       got =
         let
-          meta = (lib.mkTasks { } {
+          inherit ((lib.mkTasks { } {
             deploy = lib.task { description = "Deploy production"; } (lib.sh "aws s3 sync\n");
-          }).meta;
+          })) meta;
         in
         (head meta).description;
       expected = "Deploy production";
@@ -889,9 +889,9 @@ let
       name = "mkTasks: group surfaced in .meta";
       got =
         let
-          meta = (lib.mkTasks { } {
+          inherit ((lib.mkTasks { } {
             deploy = lib.task { group = "release"; } (lib.sh "aws s3 sync\n");
-          }).meta;
+          })) meta;
         in
         (head meta).group;
       expected = "release";
@@ -1318,11 +1318,14 @@ let
     {
       name = "source-read: \${VAR:-default} works with zero prefix";
       got = with lib.runtimeScope;
-        (lib.mkTasks { } {
-          t = lib.bash ''
-            echo ${VAR:-default}
-          '';
-        }).tasks.t.text;
+        let
+          inherit ((lib.mkTasks { } {
+            t = lib.bash ''
+              echo ${VAR:-default}
+            '';
+          })) tasks;
+        in
+        tasks.t.text;
       expected = "echo \${VAR:-default}\n";
     }
 

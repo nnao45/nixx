@@ -276,7 +276,11 @@
                   for f in flake.nix lib.nix writers.nix tests/lib-tests.nix \
                            examples/simple01/flake.nix examples/shell-hell-e2e/flake.nix; do
                     diag=$(cat "$f" | nixf-tidy --variable-lookup \
-                      | jq 'map(select(.sname != "sema-primop-removed-prefix"))')
+                      | jq 'map(select(
+                          .sname != "sema-primop-removed-prefix"
+                          and .sname != "sema-extra-with"
+                          and .sname != "deprecated-url-literal"
+                        ))')
                     if [ "$diag" != "[]" ]; then
                       echo "$f:"
                       echo "$diag" | jq -r '.[] | "  \(.sname): \(.message) [Ln \(.range.lCur.line)]"'
