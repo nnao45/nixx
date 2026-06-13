@@ -7,7 +7,7 @@
     nixx.url = "path:../..";
   };
 
-  outputs = { self, nixpkgs, flake-utils, nixx }:
+  outputs = { nixpkgs, flake-utils, nixx, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -19,7 +19,7 @@
         packages = let
 
           # ── e2e-deps: dependency chains, diamond, guard ──────────────────────
-          e2eDeps = mkE2e "e2e-deps" ((n.mkTasks { name = "e2e-deps"; } {
+          e2eDeps = mkE2e "e2e-deps" (n.mkTasks { name = "e2e-deps"; } {
             # A1: linear chain  step1 → step2 → step3
             step1 = n.sh ''export LINEAR="ran"'';
             step2 = n.task { deps = [ "step1" ]; } (n.sh ''
@@ -52,10 +52,10 @@
             all = n.task { deps = [ "step3" "dia_d" ]; } (n.sh ''
               echo "=== e2e-deps: ALL PASSED ==="
             '');
-          }).runner);
+          }).runner;
 
           # ── e2e-env: env vars, requirements (PATH), cwd ──────────────────────
-          e2eEnv = mkE2e "e2e-env" ((n.mkTasks { name = "e2e-env"; } {
+          e2eEnv = mkE2e "e2e-env" (n.mkTasks { name = "e2e-env"; } {
             env_test = n.task {
               env = {
                 FOO = "hello world";
@@ -83,10 +83,10 @@
             all = n.task { deps = [ "env_test" "path_test" "cwd_test" ]; } (n.sh ''
               echo "=== e2e-env: ALL PASSED ==="
             '');
-          }).runner);
+          }).runner;
 
           # ── e2e-strict: strict mode restores set -euo pipefail ───────────────
-          e2eStrict = mkE2e "e2e-strict" ((n.mkTasks { name = "e2e-strict"; } {
+          e2eStrict = mkE2e "e2e-strict" (n.mkTasks { name = "e2e-strict"; } {
             # first, disable strict mode so we can verify restoration
             disable = n.sh ''
               set +euo pipefail
@@ -110,10 +110,10 @@
             all = n.task { deps = [ "strict_on" "strict_off" ]; } (n.sh ''
               echo "=== e2e-strict: ALL PASSED ==="
             '');
-          }).runner);
+          }).runner;
 
           # ── e2e-combo: parent export propagates to child (same bash process) ──
-          e2eCombo = mkE2e "e2e-combo" ((n.mkTasks { name = "e2e-combo"; } {
+          e2eCombo = mkE2e "e2e-combo" (n.mkTasks { name = "e2e-combo"; } {
             setter = n.sh ''
               export COMBO_VAR="from_parent"
               export COMBO_EXTRA="also_visible"
@@ -130,10 +130,10 @@
             all = n.task { deps = [ "getter" ]; } (n.sh ''
               echo "=== e2e-combo: ALL PASSED ==="
             '');
-          }).runner);
+          }).runner;
 
           # ── e2e-edge: empty tasks, special chars, multi defaultDeps ───────────
-          e2eEdge = mkE2e "e2e-edge" ((n.mkTasks {
+          e2eEdge = mkE2e "e2e-edge" (n.mkTasks {
             name = "e2e-edge";
             defaultDeps = [ "setup_a" "setup_b" ];
           } {
@@ -173,10 +173,10 @@
             all = n.task { deps = [ "empty" "special_chars" "verify_setups" ]; } (n.sh ''
               echo "=== e2e-edge: ALL PASSED ==="
             '');
-          }).runner);
+          }).runner;
 
           # ── e2e-circular: circular deps handled by run-once guard ─────────────
-          e2eCircular = mkE2e "e2e-circular" ((n.mkTasks { name = "e2e-circular"; } {
+          e2eCircular = mkE2e "e2e-circular" (n.mkTasks { name = "e2e-circular"; } {
             circ_a = n.task { deps = [ "circ_b" ]; } (n.sh ''
               export CIRC_A=1
             '');
@@ -194,9 +194,9 @@
             all = n.task { deps = [ "verify" ]; } (n.sh ''
               echo "=== e2e-circular: ALL PASSED ==="
             '');
-          }).runner);
+          }).runner;
 
-        in rec {
+        in {
           e2e-deps     = e2eDeps;
           e2e-env     = e2eEnv;
           e2e-strict  = e2eStrict;

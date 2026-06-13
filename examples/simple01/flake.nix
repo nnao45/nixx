@@ -7,7 +7,7 @@
     nixx.url = "path:../..";
   };
 
-  outputs = { self, nixpkgs, flake-utils, nixx }:
+  outputs = { nixpkgs, flake-utils, nixx, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -74,14 +74,14 @@
           #   tasks check     → report then validate (just-style deps)
           tasks =
             let
-              runner = (n.mkTasks { name = "tasks"; } {
+              inherit ((n.mkTasks { name = "tasks"; } {
                 status   = n.sh ''${status}/bin/status'';
                 report   = n.sh ''${report}/bin/report'';
                 validate = n.sh ''${validate}/bin/validate'';
                 check    = n.task { deps = [ "report" "validate" ]; } (n.sh ''
                   echo "all checks passed"
                 '');
-              }).runner;
+              })) runner;
             in
             pkgs.writeShellApplication { name = "tasks"; text = runner; };
 

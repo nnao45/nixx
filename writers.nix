@@ -36,8 +36,9 @@ rec {
       writeBunApplication ((pick (common ++ [ "projectRoot" "compile" ])) // { inherit block; })
     else if lang == "node" then
       writeNodeApplication ((pick (common ++ [ "projectRoot" "nodeModules" "syntaxCheck" ])) // { inherit block; })
-    else throw ("nixx.runApplication: no builder for lang '" + lang + "' "
-             + "(have: bash, python-uv, bun, node)");
+    else
+      throw ("nixx.runApplication: no builder for lang '" + lang + "' "
+        + "(have: bash, python-uv, bun, node)");
 
   # writeUvApplication — Python via uv, built to /nix/store/<hash>/bin/<name>.
   #
@@ -66,14 +67,16 @@ rec {
     let
       useProject = projectRoot != null;
       # in project mode the body needs no PEP 723 header (manifest owns deps)
-      script = nixx.mkScript {
-        lang = "python-uv";
-        deps = if useProject then [ ] else deps;
-        inherit pythonReq vars;
-        # in project mode we run via `uv run`, so a uv shebang is redundant;
-        # keep a plain python marker the wrapper strips.
-        shebang = if useProject then "# (project script)" else null;
-      } block;
+      script = nixx.mkScript
+        {
+          lang = "python-uv";
+          deps = if useProject then [ ] else deps;
+          inherit pythonReq vars;
+          # in project mode we run via `uv run`, so a uv shebang is redundant;
+          # keep a plain python marker the wrapper strips.
+          shebang = if useProject then "# (project script)" else null;
+        }
+        block;
       storedProject =
         if useProject
         then builtins.path { path = projectRoot; name = "${name}-project"; }
@@ -129,10 +132,12 @@ rec {
     { name, runtimeInputs ? [ ], vars ? { }, block, strict ? true }:
     pkgs.writeShellApplication {
       inherit name runtimeInputs;
-      text = nixx.mkScript {
-        lang = "bash"; inherit vars strict;
-        shebang = "";  # writeShellApplication adds its own shebang+strict
-      } block;
+      text = nixx.mkScript
+        {
+          lang = "bash"; inherit vars strict;
+          shebang = ""; # writeShellApplication adds its own shebang+strict
+        }
+        block;
     };
 
   # writeNodeApplication — a Node script built to a store path.
@@ -145,8 +150,13 @@ rec {
   #     block = nixx.sh ''  const _ = require("lodash"); ...  '';
   #   }
   writeNodeApplication =
-    { name, block, vars ? { }, nodeModules ? null, runtimeInputs ? [ ]
-    , syntaxCheck ? true }:
+    { name
+    , block
+    , vars ? { }
+    , nodeModules ? null
+    , runtimeInputs ? [ ]
+    , syntaxCheck ? true
+    }:
     let
       script = nixx.mkScript { lang = "node"; inherit vars; } block;
       nodePath = lib.optionalString (nodeModules != null)
@@ -190,16 +200,22 @@ rec {
   #     relies on bun's runtime auto-install (fast, but resolves at run time).
   # `tscheck = true` runs `bun build` (which type-checks) as a BUILD GATE.
   writeBunApplication =
-    { name, block, vars ? { }, compile ? true, runtimeInputs ? [ ]
+    { name
+    , block
+    , vars ? { }
+    , compile ? true
+    , runtimeInputs ? [ ]
     , projectRoot ? null    # dir with package.json (+ bun.lockb); deps from there
     }:
     let
       useProject = projectRoot != null;
-      script = nixx.mkScript {
-        lang = "bun";
-        shebang = if compile then "// (compiled)" else "#!/usr/bin/env bun";
-        inherit vars;
-      } block;
+      script = nixx.mkScript
+        {
+          lang = "bun";
+          shebang = if compile then "// (compiled)" else "#!/usr/bin/env bun";
+          inherit vars;
+        }
+        block;
       storedProject =
         if useProject
         then builtins.path { path = projectRoot; name = "${name}-project"; }

@@ -9,7 +9,7 @@ let
   splitLines = s: filter isString (split "\n" s);
 
   # Literal (non-regex) substring check: safe for (, ), [, {, +, * etc.
-  contains = needle: text: replaceStrings [needle] [""] text != text;
+  contains = needle: text: replaceStrings [ needle ] [ "" ] text != text;
 
   # First non-empty line of a multi-line string.
   firstLine = text: head (filter (l: l != "") (splitLines text));
@@ -20,531 +20,779 @@ let
     # ----------------------------------------------------------------
     # shq — POSIX single-quote escaping
     # ----------------------------------------------------------------
-    { name = "shq: plain string";
+    {
+      name = "shq: plain string";
       got = lib.shq "hello";
-      expected = "'hello'"; }
+      expected = "'hello'";
+    }
 
-    { name = "shq: string with a single quote";
+    {
+      name = "shq: string with a single quote";
       got = lib.shq "it's";
-      expected = "'it'\\''s'"; }
+      expected = "'it'\\''s'";
+    }
 
-    { name = "shq: multiple single quotes";
+    {
+      name = "shq: multiple single quotes";
       got = lib.shq "a'b'c";
-      expected = "'a'\\''b'\\''c'"; }
+      expected = "'a'\\''b'\\''c'";
+    }
 
-    { name = "shq: empty string";
+    {
+      name = "shq: empty string";
       got = lib.shq "";
-      expected = "''"; }
+      expected = "''";
+    }
 
-    { name = "shq: only a single quote";
+    {
+      name = "shq: only a single quote";
       got = lib.shq "'";
-      expected = "''\\'''"; }
+      expected = "''\\'''";
+    }
 
-    { name = "shq: string with spaces";
+    {
+      name = "shq: string with spaces";
       got = lib.shq "hello world";
-      expected = "'hello world'"; }
+      expected = "'hello world'";
+    }
 
-    { name = "shq: dollar sign is safe inside single quotes";
+    {
+      name = "shq: dollar sign is safe inside single quotes";
       got = lib.shq "\${VAR}";
-      expected = "'\${VAR}'"; }
+      expected = "'\${VAR}'";
+    }
 
-    { name = "shq: integer coerced via toString";
+    {
+      name = "shq: integer coerced via toString";
       got = lib.shq 42;
-      expected = "'42'"; }
+      expected = "'42'";
+    }
 
-    { name = "shq: path-like string";
+    {
+      name = "shq: path-like string";
       got = lib.shq "/usr/local/bin";
-      expected = "'/usr/local/bin'"; }
+      expected = "'/usr/local/bin'";
+    }
 
-    { name = "shq: backslash is safe inside single quotes";
+    {
+      name = "shq: backslash is safe inside single quotes";
       got = lib.shq "a\\b";
-      expected = "'a\\b'"; }
+      expected = "'a\\b'";
+    }
 
     # ----------------------------------------------------------------
     # dedent — strip common leading whitespace + surrounding blank lines
     # ----------------------------------------------------------------
-    { name = "dedent: basic indented body";
+    {
+      name = "dedent: basic indented body";
       got = lib.dedent "  echo hello\n  echo world\n";
-      expected = "echo hello\necho world\n"; }
+      expected = "echo hello\necho world\n";
+    }
 
-    { name = "dedent: deeper indentation";
+    {
+      name = "dedent: deeper indentation";
       got = lib.dedent "    line1\n    line2\n";
-      expected = "line1\nline2\n"; }
+      expected = "line1\nline2\n";
+    }
 
-    { name = "dedent: mixed indentation — only common part stripped";
+    {
+      name = "dedent: mixed indentation — only common part stripped";
       got = lib.dedent "  a\n    b\n  c\n";
-      expected = "a\n  b\nc\n"; }
+      expected = "a\n  b\nc\n";
+    }
 
-    { name = "dedent: leading blank lines stripped";
+    {
+      name = "dedent: leading blank lines stripped";
       got = lib.dedent "\n\n  echo hi\n";
-      expected = "echo hi\n"; }
+      expected = "echo hi\n";
+    }
 
-    { name = "dedent: trailing blank lines stripped";
+    {
+      name = "dedent: trailing blank lines stripped";
       got = lib.dedent "  echo hi\n\n\n";
-      expected = "echo hi\n"; }
+      expected = "echo hi\n";
+    }
 
-    { name = "dedent: empty body";
+    {
+      name = "dedent: empty body";
       got = lib.dedent "";
-      expected = ""; }
+      expected = "";
+    }
 
-    { name = "dedent: blank-only body";
+    {
+      name = "dedent: blank-only body";
       got = lib.dedent "   \n   \n";
-      expected = ""; }
+      expected = "";
+    }
 
-    { name = "dedent: zero indentation preserved as-is";
+    {
+      name = "dedent: zero indentation preserved as-is";
       got = lib.dedent "no-indent\n";
-      expected = "no-indent\n"; }
+      expected = "no-indent\n";
+    }
 
-    { name = "dedent: blank line in middle preserved as empty string";
+    {
+      name = "dedent: blank line in middle preserved as empty string";
       got = lib.dedent "  a\n\n  b\n";
-      expected = "a\n\nb\n"; }
+      expected = "a\n\nb\n";
+    }
 
-    { name = "dedent: tab counts as one column";
+    {
+      name = "dedent: tab counts as one column";
       got = lib.dedent "\techo a\n\techo b\n";
-      expected = "echo a\necho b\n"; }
+      expected = "echo a\necho b\n";
+    }
 
-    { name = "dedent: single non-blank line";
+    {
+      name = "dedent: single non-blank line";
       got = lib.dedent "    only\n";
-      expected = "only\n"; }
+      expected = "only\n";
+    }
 
     # ----------------------------------------------------------------
     # langProfiles
     # ----------------------------------------------------------------
-    { name = "langProfiles bash: shebang";
+    {
+      name = "langProfiles bash: shebang";
       got = lib.langProfiles.bash.shebang;
-      expected = "#!/usr/bin/env bash"; }
+      expected = "#!/usr/bin/env bash";
+    }
 
-    { name = "langProfiles python: shebang";
+    {
+      name = "langProfiles python: shebang";
       got = lib.langProfiles.python.shebang;
-      expected = "#!/usr/bin/env python3"; }
+      expected = "#!/usr/bin/env python3";
+    }
 
-    { name = "langProfiles python-uv: shebang uses -S";
+    {
+      name = "langProfiles python-uv: shebang uses -S";
       got = lib.langProfiles."python-uv".shebang;
-      expected = "#!/usr/bin/env -S uv run --script"; }
+      expected = "#!/usr/bin/env -S uv run --script";
+    }
 
-    { name = "langProfiles deno: shebang uses -S";
+    {
+      name = "langProfiles deno: shebang uses -S";
       got = lib.langProfiles.deno.shebang;
-      expected = "#!/usr/bin/env -S deno run -A"; }
+      expected = "#!/usr/bin/env -S deno run -A";
+    }
 
-    { name = "langProfiles bun: shebang";
+    {
+      name = "langProfiles bun: shebang";
       got = lib.langProfiles.bun.shebang;
-      expected = "#!/usr/bin/env bun"; }
+      expected = "#!/usr/bin/env bun";
+    }
 
-    { name = "langProfiles node: shebang";
+    {
+      name = "langProfiles node: shebang";
       got = lib.langProfiles.node.shebang;
-      expected = "#!/usr/bin/env node"; }
+      expected = "#!/usr/bin/env node";
+    }
 
-    { name = "langProfiles ruby: shebang";
+    {
+      name = "langProfiles ruby: shebang";
       got = lib.langProfiles.ruby.shebang;
-      expected = "#!/usr/bin/env ruby"; }
+      expected = "#!/usr/bin/env ruby";
+    }
 
-    { name = "langProfiles lua: shebang";
+    {
+      name = "langProfiles lua: shebang";
       got = lib.langProfiles.lua.shebang;
-      expected = "#!/usr/bin/env lua"; }
+      expected = "#!/usr/bin/env lua";
+    }
 
-    { name = "langProfiles bash: strict=true";
+    {
+      name = "langProfiles bash: strict=true";
       got = lib.langProfiles.bash.strict;
-      expected = true; }
+      expected = true;
+    }
 
-    { name = "langProfiles python: strict=false";
+    {
+      name = "langProfiles python: strict=false";
       got = lib.langProfiles.python.strict;
-      expected = false; }
+      expected = false;
+    }
 
-    { name = "langProfiles python-uv: pathStyle=uv";
+    {
+      name = "langProfiles python-uv: pathStyle=uv";
       got = lib.langProfiles."python-uv".pathStyle;
-      expected = "uv"; }
+      expected = "uv";
+    }
 
-    { name = "langProfiles bash: pathStyle=bash";
+    {
+      name = "langProfiles bash: pathStyle=bash";
       got = lib.langProfiles.bash.pathStyle;
-      expected = "bash"; }
+      expected = "bash";
+    }
 
-    { name = "langProfiles ruby: pathStyle=none";
+    {
+      name = "langProfiles ruby: pathStyle=none";
       got = lib.langProfiles.ruby.pathStyle;
-      expected = "none"; }
+      expected = "none";
+    }
 
-    { name = "langProfiles deno: pathStyle=none";
+    {
+      name = "langProfiles deno: pathStyle=none";
       got = lib.langProfiles.deno.pathStyle;
-      expected = "none"; }
+      expected = "none";
+    }
 
     # ----------------------------------------------------------------
     # mkBlock / language constructors
     # ----------------------------------------------------------------
-    { name = "sh: __lang=bash";
+    {
+      name = "sh: __lang=bash";
       got = (lib.sh "echo hi\n").__lang;
-      expected = "bash"; }
+      expected = "bash";
+    }
 
-    { name = "sh: __sh=true";
+    {
+      name = "sh: __sh=true";
       got = (lib.sh "echo hi\n").__sh;
-      expected = true; }
+      expected = true;
+    }
 
-    { name = "sh: body is dedented";
+    {
+      name = "sh: body is dedented";
       got = (lib.sh "  echo hi\n  echo bye\n").text;
-      expected = "echo hi\necho bye\n"; }
+      expected = "echo hi\necho bye\n";
+    }
 
-    { name = "sh: rawBody preserved verbatim";
+    {
+      name = "sh: rawBody preserved verbatim";
       got = (lib.sh "  echo raw\n").rawBody;
-      expected = "  echo raw\n"; }
+      expected = "  echo raw\n";
+    }
 
-    { name = "sh: indent column count recorded";
+    {
+      name = "sh: indent column count recorded";
       got = (lib.sh "  echo x\n").indent;
-      expected = 2; }
+      expected = 2;
+    }
 
-    { name = "py: __lang=python";
+    {
+      name = "py: __lang=python";
       got = (lib.py "print('hi')\n").__lang;
-      expected = "python"; }
+      expected = "python";
+    }
 
-    { name = "uv: __lang=python-uv";
+    {
+      name = "uv: __lang=python-uv";
       got = (lib.uv "print('hi')\n").__lang;
-      expected = "python-uv"; }
+      expected = "python-uv";
+    }
 
-    { name = "bun: __lang=bun";
+    {
+      name = "bun: __lang=bun";
       got = (lib.bun "console.log('hi')\n").__lang;
-      expected = "bun"; }
+      expected = "bun";
+    }
 
-    { name = "ts: __lang=bun (alias)";
+    {
+      name = "ts: __lang=bun (alias)";
       got = (lib.ts "console.log('hi')\n").__lang;
-      expected = "bun"; }
+      expected = "bun";
+    }
 
-    { name = "node: __lang=node";
+    {
+      name = "node: __lang=node";
       got = (lib.node "console.log('hi')\n").__lang;
-      expected = "node"; }
+      expected = "node";
+    }
 
-    { name = "deno: __lang=deno";
+    {
+      name = "deno: __lang=deno";
       got = (lib.deno "console.log('hi')\n").__lang;
-      expected = "deno"; }
+      expected = "deno";
+    }
 
-    { name = "ruby: __lang=ruby";
+    {
+      name = "ruby: __lang=ruby";
       got = (lib.ruby "puts 'hi'\n").__lang;
-      expected = "ruby"; }
+      expected = "ruby";
+    }
 
-    { name = "lua: __lang=lua";
+    {
+      name = "lua: __lang=lua";
       got = (lib.lua "print('hi')\n").__lang;
-      expected = "lua"; }
+      expected = "lua";
+    }
 
-    { name = "mkBlock: requirements defaults to []";
+    {
+      name = "mkBlock: requirements defaults to []";
       got = (lib.sh "echo\n").requirements;
-      expected = []; }
+      expected = [ ];
+    }
 
-    { name = "mkBlock: env defaults to {}";
+    {
+      name = "mkBlock: env defaults to {}";
       got = (lib.sh "echo\n").env;
-      expected = {}; }
+      expected = { };
+    }
 
-    { name = "mkBlock: cwd defaults to null";
+    {
+      name = "mkBlock: cwd defaults to null";
       got = (lib.sh "echo\n").cwd;
-      expected = null; }
+      expected = null;
+    }
 
     # ----------------------------------------------------------------
     # mkScript — shebang selection
     # ----------------------------------------------------------------
-    { name = "mkScript bash: default shebang #!/usr/bin/env bash";
-      got = firstLine (lib.mkScript {} (lib.sh "echo hi\n"));
-      expected = "#!/usr/bin/env bash"; }
+    {
+      name = "mkScript bash: default shebang #!/usr/bin/env bash";
+      got = firstLine (lib.mkScript { } (lib.sh "echo hi\n"));
+      expected = "#!/usr/bin/env bash";
+    }
 
-    { name = "mkScript py: default shebang #!/usr/bin/env python3";
-      got = firstLine (lib.mkScript {} (lib.py "print('hi')\n"));
-      expected = "#!/usr/bin/env python3"; }
+    {
+      name = "mkScript py: default shebang #!/usr/bin/env python3";
+      got = firstLine (lib.mkScript { } (lib.py "print('hi')\n"));
+      expected = "#!/usr/bin/env python3";
+    }
 
-    { name = "mkScript uv: default shebang -S uv run --script";
-      got = firstLine (lib.mkScript {} (lib.uv "print('hi')\n"));
-      expected = "#!/usr/bin/env -S uv run --script"; }
+    {
+      name = "mkScript uv: default shebang -S uv run --script";
+      got = firstLine (lib.mkScript { } (lib.uv "print('hi')\n"));
+      expected = "#!/usr/bin/env -S uv run --script";
+    }
 
-    { name = "mkScript deno: default shebang -S deno run -A";
-      got = firstLine (lib.mkScript {} (lib.deno "console.log('hi')\n"));
-      expected = "#!/usr/bin/env -S deno run -A"; }
+    {
+      name = "mkScript deno: default shebang -S deno run -A";
+      got = firstLine (lib.mkScript { } (lib.deno "console.log('hi')\n"));
+      expected = "#!/usr/bin/env -S deno run -A";
+    }
 
-    { name = "mkScript bun: default shebang #!/usr/bin/env bun";
-      got = firstLine (lib.mkScript {} (lib.bun "console.log('hi')\n"));
-      expected = "#!/usr/bin/env bun"; }
+    {
+      name = "mkScript bun: default shebang #!/usr/bin/env bun";
+      got = firstLine (lib.mkScript { } (lib.bun "console.log('hi')\n"));
+      expected = "#!/usr/bin/env bun";
+    }
 
-    { name = "mkScript node: default shebang #!/usr/bin/env node";
-      got = firstLine (lib.mkScript {} (lib.node "console.log('hi')\n"));
-      expected = "#!/usr/bin/env node"; }
+    {
+      name = "mkScript node: default shebang #!/usr/bin/env node";
+      got = firstLine (lib.mkScript { } (lib.node "console.log('hi')\n"));
+      expected = "#!/usr/bin/env node";
+    }
 
-    { name = "mkScript ruby: default shebang #!/usr/bin/env ruby";
-      got = firstLine (lib.mkScript {} (lib.ruby "puts 'hi'\n"));
-      expected = "#!/usr/bin/env ruby"; }
+    {
+      name = "mkScript ruby: default shebang #!/usr/bin/env ruby";
+      got = firstLine (lib.mkScript { } (lib.ruby "puts 'hi'\n"));
+      expected = "#!/usr/bin/env ruby";
+    }
 
-    { name = "mkScript lua: default shebang #!/usr/bin/env lua";
-      got = firstLine (lib.mkScript {} (lib.lua "print('hi')\n"));
-      expected = "#!/usr/bin/env lua"; }
+    {
+      name = "mkScript lua: default shebang #!/usr/bin/env lua";
+      got = firstLine (lib.mkScript { } (lib.lua "print('hi')\n"));
+      expected = "#!/usr/bin/env lua";
+    }
 
-    { name = "mkScript: #!/bin/sh in body is preserved";
-      got = firstLine (lib.mkScript {} (lib.sh "#!/bin/sh\necho hi\n"));
-      expected = "#!/bin/sh"; }
+    {
+      name = "mkScript: #!/bin/sh in body is preserved";
+      got = firstLine (lib.mkScript { } (lib.sh "#!/bin/sh\necho hi\n"));
+      expected = "#!/bin/sh";
+    }
 
-    { name = "mkScript: #!/bin/bash in body is preserved";
-      got = firstLine (lib.mkScript {} (lib.sh "#!/bin/bash\necho hi\n"));
-      expected = "#!/bin/bash"; }
+    {
+      name = "mkScript: #!/bin/bash in body is preserved";
+      got = firstLine (lib.mkScript { } (lib.sh "#!/bin/bash\necho hi\n"));
+      expected = "#!/bin/bash";
+    }
 
-    { name = "mkScript: #!/usr/bin/env -S bash --norc in body is preserved";
-      got = firstLine (lib.mkScript {} (lib.sh "#!/usr/bin/env -S bash --norc\necho hi\n"));
-      expected = "#!/usr/bin/env -S bash --norc"; }
+    {
+      name = "mkScript: #!/usr/bin/env -S bash --norc in body is preserved";
+      got = firstLine (lib.mkScript { } (lib.sh "#!/usr/bin/env -S bash --norc\necho hi\n"));
+      expected = "#!/usr/bin/env -S bash --norc";
+    }
 
-    { name = "mkScript: #!/usr/bin/env nix-shell in body is preserved";
-      got = firstLine (lib.mkScript {} (lib.sh "#!/usr/bin/env nix-shell\n#!nix-shell -p bash\necho hi\n"));
-      expected = "#!/usr/bin/env nix-shell"; }
+    {
+      name = "mkScript: #!/usr/bin/env nix-shell in body is preserved";
+      got = firstLine (lib.mkScript { } (lib.sh "#!/usr/bin/env nix-shell\n#!nix-shell -p bash\necho hi\n"));
+      expected = "#!/usr/bin/env nix-shell";
+    }
 
-    { name = "mkScript: explicit shebang= arg overrides profile default";
+    {
+      name = "mkScript: explicit shebang= arg overrides profile default";
       got = firstLine (lib.mkScript { shebang = "#!/usr/bin/env bash5"; }
-                        (lib.sh "echo hi\n"));
-      expected = "#!/usr/bin/env bash5"; }
+        (lib.sh "echo hi\n"));
+      expected = "#!/usr/bin/env bash5";
+    }
 
-    { name = "mkScript: explicit lang= arg selects a different profile shebang";
+    {
+      name = "mkScript: explicit lang= arg selects a different profile shebang";
       got = firstLine (lib.mkScript { lang = "python"; }
-                        (lib.sh "print('hi')\n"));
-      expected = "#!/usr/bin/env python3"; }
+        (lib.sh "print('hi')\n"));
+      expected = "#!/usr/bin/env python3";
+    }
 
     # ----------------------------------------------------------------
     # mkScript — strict mode
     # ----------------------------------------------------------------
-    { name = "mkScript bash: set -euo pipefail present by default";
-      got = contains "set -euo pipefail" (lib.mkScript {} (lib.sh "echo hi\n"));
-      expected = true; }
+    {
+      name = "mkScript bash: set -euo pipefail present by default";
+      got = contains "set -euo pipefail" (lib.mkScript { } (lib.sh "echo hi\n"));
+      expected = true;
+    }
 
-    { name = "mkScript bash: strict=false suppresses set -euo pipefail";
+    {
+      name = "mkScript bash: strict=false suppresses set -euo pipefail";
       got = contains "set -euo pipefail" (lib.mkScript { strict = false; } (lib.sh "echo hi\n"));
-      expected = false; }
+      expected = false;
+    }
 
-    { name = "mkScript python: no set -euo pipefail";
-      got = contains "set -euo pipefail" (lib.mkScript {} (lib.py "print('hi')\n"));
-      expected = false; }
+    {
+      name = "mkScript python: no set -euo pipefail";
+      got = contains "set -euo pipefail" (lib.mkScript { } (lib.py "print('hi')\n"));
+      expected = false;
+    }
 
-    { name = "mkScript deno: no set -euo pipefail";
-      got = contains "set -euo pipefail" (lib.mkScript {} (lib.deno "console.log('hi')\n"));
-      expected = false; }
+    {
+      name = "mkScript deno: no set -euo pipefail";
+      got = contains "set -euo pipefail" (lib.mkScript { } (lib.deno "console.log('hi')\n"));
+      expected = false;
+    }
 
-    { name = "mkScript bun: no set -euo pipefail";
-      got = contains "set -euo pipefail" (lib.mkScript {} (lib.bun "console.log('hi')\n"));
-      expected = false; }
+    {
+      name = "mkScript bun: no set -euo pipefail";
+      got = contains "set -euo pipefail" (lib.mkScript { } (lib.bun "console.log('hi')\n"));
+      expected = false;
+    }
 
-    { name = "mkScript node: no set -euo pipefail";
-      got = contains "set -euo pipefail" (lib.mkScript {} (lib.node "console.log('hi')\n"));
-      expected = false; }
+    {
+      name = "mkScript node: no set -euo pipefail";
+      got = contains "set -euo pipefail" (lib.mkScript { } (lib.node "console.log('hi')\n"));
+      expected = false;
+    }
 
     # ----------------------------------------------------------------
     # mkScript — complex shell syntax passes through intact
     # ----------------------------------------------------------------
-    { name = "mkScript: basic body content present";
-      got = contains "echo hello" (lib.mkScript {} (lib.sh "echo hello\n"));
-      expected = true; }
+    {
+      name = "mkScript: basic body content present";
+      got = contains "echo hello" (lib.mkScript { } (lib.sh "echo hello\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: glob */ passes through";
-      got = contains "for d in */" (lib.mkScript {} (lib.sh "for d in */; do echo \"$d\"; done\n"));
-      expected = true; }
+    {
+      name = "mkScript: glob */ passes through";
+      got = contains "for d in */" (lib.mkScript { } (lib.sh "for d in */; do echo \"$d\"; done\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: pipeline | passes through";
-      got = contains "ls | grep foo" (lib.mkScript {} (lib.sh "ls | grep foo\n"));
-      expected = true; }
+    {
+      name = "mkScript: pipeline | passes through";
+      got = contains "ls | grep foo" (lib.mkScript { } (lib.sh "ls | grep foo\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: subshell (cmd) passes through";
-      got = contains "(cd /tmp && ls)" (lib.mkScript {} (lib.sh "(cd /tmp && ls)\n"));
-      expected = true; }
+    {
+      name = "mkScript: subshell (cmd) passes through";
+      got = contains "(cd /tmp && ls)" (lib.mkScript { } (lib.sh "(cd /tmp && ls)\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: arithmetic (( expr )) passes through";
-      got = contains "(( x + 1 ))" (lib.mkScript {} (lib.sh "(( x + 1 ))\n"));
-      expected = true; }
+    {
+      name = "mkScript: arithmetic (( expr )) passes through";
+      got = contains "(( x + 1 ))" (lib.mkScript { } (lib.sh "(( x + 1 ))\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: process substitution <(cmd) passes through";
-      got = contains "diff <(sort a) <(sort b)" (lib.mkScript {} (lib.sh "diff <(sort a) <(sort b)\n"));
-      expected = true; }
+    {
+      name = "mkScript: process substitution <(cmd) passes through";
+      got = contains "diff <(sort a) <(sort b)" (lib.mkScript { } (lib.sh "diff <(sort a) <(sort b)\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: array literal arr=(a b c) passes through";
-      got = contains "arr=(a b c)" (lib.mkScript {} (lib.sh "arr=(a b c)\n"));
-      expected = true; }
+    {
+      name = "mkScript: array literal arr=(a b c) passes through";
+      got = contains "arr=(a b c)" (lib.mkScript { } (lib.sh "arr=(a b c)\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: sed with * delimiter passes through";
-      got = contains "sed 's*foo*bar*'" (lib.mkScript {} (lib.sh "sed 's*foo*bar*'\n"));
-      expected = true; }
+    {
+      name = "mkScript: sed with * delimiter passes through";
+      got = contains "sed 's*foo*bar*'" (lib.mkScript { } (lib.sh "sed 's*foo*bar*'\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: heredoc <<'EOF' passes through";
-      got = contains "cat <<'EOF'" (lib.mkScript {} (lib.sh "cat <<'EOF'\nhello\nEOF\n"));
-      expected = true; }
+    {
+      name = "mkScript: heredoc <<'EOF' passes through";
+      got = contains "cat <<'EOF'" (lib.mkScript { } (lib.sh "cat <<'EOF'\nhello\nEOF\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: case statement passes through";
-      got = contains "case \"$x\" in" (lib.mkScript {} (lib.sh "case \"$x\" in\n  a) echo a;;\nesac\n"));
-      expected = true; }
+    {
+      name = "mkScript: case statement passes through";
+      got = contains "case \"$x\" in" (lib.mkScript { } (lib.sh "case \"$x\" in\n  a) echo a;;\nesac\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: function definition passes through";
-      got = contains "my_func() {" (lib.mkScript {} (lib.sh "my_func() {\n  echo hi\n}\n"));
-      expected = true; }
+    {
+      name = "mkScript: function definition passes through";
+      got = contains "my_func() {" (lib.mkScript { } (lib.sh "my_func() {\n  echo hi\n}\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: [[ double bracket ]] passes through";
-      got = contains "[[ -f foo ]] && echo yes" (lib.mkScript {} (lib.sh "[[ -f foo ]] && echo yes\n"));
-      expected = true; }
+    {
+      name = "mkScript: [[ double bracket ]] passes through";
+      got = contains "[[ -f foo ]] && echo yes" (lib.mkScript { } (lib.sh "[[ -f foo ]] && echo yes\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: brace expansion {a,b,c} passes through";
-      got = contains "echo {a,b,c}" (lib.mkScript {} (lib.sh "echo {a,b,c}\n"));
-      expected = true; }
+    {
+      name = "mkScript: brace expansion {a,b,c} passes through";
+      got = contains "echo {a,b,c}" (lib.mkScript { } (lib.sh "echo {a,b,c}\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: tilde ~ passes through";
-      got = contains "cd ~/work" (lib.mkScript {} (lib.sh "cd ~/work\n"));
-      expected = true; }
+    {
+      name = "mkScript: tilde ~ passes through";
+      got = contains "cd ~/work" (lib.mkScript { } (lib.sh "cd ~/work\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: multiline if-then-fi passes through";
-      got = contains "if [[ $x -gt 0 ]]; then" (lib.mkScript {} (lib.sh "if [[ \$x -gt 0 ]]; then\n  echo pos\nfi\n"));
-      expected = true; }
+    {
+      name = "mkScript: multiline if-then-fi passes through";
+      got = contains "if [[ $x -gt 0 ]]; then" (lib.mkScript { } (lib.sh "if [[ \$x -gt 0 ]]; then\n  echo pos\nfi\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: bang negation ! passes through";
-      got = contains "! grep" (lib.mkScript {} (lib.sh "! grep foo bar\n"));
-      expected = true; }
+    {
+      name = "mkScript: bang negation ! passes through";
+      got = contains "! grep" (lib.mkScript { } (lib.sh "! grep foo bar\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: here-string <<< passes through";
-      got = contains "grep foo <<<\"$bar\"" (lib.mkScript {} (lib.sh "grep foo <<<\"$bar\"\n"));
-      expected = true; }
+    {
+      name = "mkScript: here-string <<< passes through";
+      got = contains "grep foo <<<\"$bar\"" (lib.mkScript { } (lib.sh "grep foo <<<\"$bar\"\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: while read loop passes through";
-      got = contains "while IFS= read -r line" (lib.mkScript {} (lib.sh "while IFS= read -r line; do echo \"$line\"; done\n"));
-      expected = true; }
+    {
+      name = "mkScript: while read loop passes through";
+      got = contains "while IFS= read -r line" (lib.mkScript { } (lib.sh "while IFS= read -r line; do echo \"$line\"; done\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: mapfile/readarray passes through";
-      got = contains "mapfile -t lines" (lib.mkScript {} (lib.sh "mapfile -t lines < file.txt\n"));
-      expected = true; }
+    {
+      name = "mkScript: mapfile/readarray passes through";
+      got = contains "mapfile -t lines" (lib.mkScript { } (lib.sh "mapfile -t lines < file.txt\n"));
+      expected = true;
+    }
 
-    { name = "mkScript: printf with format string passes through";
-      got = contains "printf '%s\\n'" (lib.mkScript {} (lib.sh "printf '%s\\n' \"$x\"\n"));
-      expected = true; }
+    {
+      name = "mkScript: printf with format string passes through";
+      got = contains "printf '%s\\n'" (lib.mkScript { } (lib.sh "printf '%s\\n' \"$x\"\n"));
+      expected = true;
+    }
 
     # ----------------------------------------------------------------
     # substVars integration (via mkScript vars=)
     # ----------------------------------------------------------------
-    { name = "substVars @nix(x): integer raw value";
+    {
+      name = "substVars @nix(x): integer raw value";
       got = contains "echo 42" (lib.mkScript { vars = { port = 42; }; } (lib.sh "echo @nix(port)\n"));
-      expected = true; }
+      expected = true;
+    }
 
-    { name = "substVars @sh:q(x): value shell-quoted";
+    {
+      name = "substVars @sh:q(x): value shell-quoted";
       got = contains "echo 'hello world'" (lib.mkScript { vars = { msg = "hello world"; }; } (lib.sh "echo @sh:q(msg)\n"));
-      expected = true; }
+      expected = true;
+    }
 
-    { name = "substVars @sh:q(x): single quotes in value escaped";
+    {
+      name = "substVars @sh:q(x): single quotes in value escaped";
       got = contains "echo 'it'\\''s'" (lib.mkScript { vars = { msg = "it's"; }; } (lib.sh "echo @sh:q(msg)\n"));
-      expected = true; }
+      expected = true;
+    }
 
-    { name = "substVars @nix:q(x) is identical to @sh:q(x)";
+    {
+      name = "substVars @nix:q(x) is identical to @sh:q(x)";
       got = (lib.mkScript { vars = { x = "hello"; }; } (lib.sh "echo @nix:q(x)\n"))
-            == (lib.mkScript { vars = { x = "hello"; }; } (lib.sh "echo @sh:q(x)\n"));
-      expected = true; }
+        == (lib.mkScript { vars = { x = "hello"; }; } (lib.sh "echo @sh:q(x)\n"));
+      expected = true;
+    }
 
-    { name = "substVars: multiple vars replaced";
-      got = let out = lib.mkScript { vars = { a = 3000; b = 8080; }; } (lib.sh "echo @nix(a) @nix(b)\n");
-            in contains "3000" out && contains "8080" out;
-      expected = true; }
+    {
+      name = "substVars: multiple vars replaced";
+      got =
+        let out = lib.mkScript { vars = { a = 3000; b = 8080; }; } (lib.sh "echo @nix(a) @nix(b)\n");
+        in contains "3000" out && contains "8080" out;
+      expected = true;
+    }
 
-    { name = "substVars: unknown marker left unchanged when no vars given";
-      got = contains "@nix(port)" (lib.mkScript {} (lib.sh "echo @nix(port)\n"));
-      expected = true; }
+    {
+      name = "substVars: unknown marker left unchanged when no vars given";
+      got = contains "@nix(port)" (lib.mkScript { } (lib.sh "echo @nix(port)\n"));
+      expected = true;
+    }
 
-    { name = "substVars @py:q(x): python double-quoted string";
+    {
+      name = "substVars @py:q(x): python double-quoted string";
       got = contains "print(\"hello\")" (lib.mkScript { vars = { msg = "hello"; }; } (lib.py "print(@py:q(msg))\n"));
-      expected = true; }
+      expected = true;
+    }
 
-    { name = "substVars @js:q(x): js double-quoted string";
+    {
+      name = "substVars @js:q(x): js double-quoted string";
       got = contains "console.log(\"hello\")" (lib.mkScript { vars = { msg = "hello"; }; } (lib.bun "console.log(@js:q(msg))\n"));
-      expected = true; }
+      expected = true;
+    }
 
     # ----------------------------------------------------------------
     # mkTasks — runner generation
     # ----------------------------------------------------------------
-    { name = "mkTasks runner: first line is #!/usr/bin/env bash";
-      got = firstLine (lib.mkTasks {} { build = lib.sh "make\n"; }).runner;
-      expected = "#!/usr/bin/env bash"; }
+    {
+      name = "mkTasks runner: first line is #!/usr/bin/env bash";
+      got = firstLine (lib.mkTasks { } { build = lib.sh "make\n"; }).runner;
+      expected = "#!/usr/bin/env bash";
+    }
 
-    { name = "mkTasks runner: set -euo pipefail present";
-      got = contains "set -euo pipefail" (lib.mkTasks {} { build = lib.sh "make\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: set -euo pipefail present";
+      got = contains "set -euo pipefail" (lib.mkTasks { } { build = lib.sh "make\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: task function emitted";
-      got = contains "task_build() {" (lib.mkTasks {} { build = lib.sh "make\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: task function emitted";
+      got = contains "task_build() {" (lib.mkTasks { } { build = lib.sh "make\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: dispatcher _nixx_run emitted";
-      got = contains "_nixx_run() {" (lib.mkTasks {} { build = lib.sh "make\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: dispatcher _nixx_run emitted";
+      got = contains "_nixx_run() {" (lib.mkTasks { } { build = lib.sh "make\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: run-once guard _NIXX_DONE present";
-      got = contains "_NIXX_DONE" (lib.mkTasks {} { build = lib.sh "make\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: run-once guard _NIXX_DONE present";
+      got = contains "_NIXX_DONE" (lib.mkTasks { } { build = lib.sh "make\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: case dispatch for task";
-      got = contains "build) shift; task_build" (lib.mkTasks {} { build = lib.sh "make\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: case dispatch for task";
+      got = contains "build) shift; task_build" (lib.mkTasks { } { build = lib.sh "make\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: body content included";
-      got = contains "make" (lib.mkTasks {} { build = lib.sh "make\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: body content included";
+      got = contains "make" (lib.mkTasks { } { build = lib.sh "make\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: two tasks both emitted";
-      got = let r = (lib.mkTasks {} { build = lib.sh "make\n"; test = lib.sh "cargo test\n"; }).runner;
-            in contains "task_build() {" r && contains "task_test() {" r;
-      expected = true; }
+    {
+      name = "mkTasks runner: two tasks both emitted";
+      got =
+        let r = (lib.mkTasks { } { build = lib.sh "make\n"; test = lib.sh "cargo test\n"; }).runner;
+        in contains "task_build() {" r && contains "task_test() {" r;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: task content after stripped shebang is preserved";
+    {
+      name = "mkTasks runner: task content after stripped shebang is preserved";
       got = contains "echo hi"
-              (lib.mkTasks {} { build = lib.sh "#!/usr/bin/env bash\necho hi\n"; }).runner;
-      expected = true; }
+        (lib.mkTasks { } { build = lib.sh "#!/usr/bin/env bash\necho hi\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: python body uses python3 heredoc";
-      got = contains "python3 <<'" (lib.mkTasks {} { run = lib.py "print('hi')\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: python body uses python3 heredoc";
+      got = contains "python3 <<'" (lib.mkTasks { } { run = lib.py "print('hi')\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: node body uses node --input-type=module heredoc";
-      got = contains "node --input-type=module <<'" (lib.mkTasks {} { run = lib.node "console.log('hi')\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: node body uses node --input-type=module heredoc";
+      got = contains "node --input-type=module <<'" (lib.mkTasks { } { run = lib.node "console.log('hi')\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: bun body uses bun run - heredoc";
-      got = contains "bun run - <<'" (lib.mkTasks {} { run = lib.bun "console.log('hi')\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: bun body uses bun run - heredoc";
+      got = contains "bun run - <<'" (lib.mkTasks { } { run = lib.bun "console.log('hi')\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: deno body uses deno run -A - heredoc";
-      got = contains "deno run -A - <<'" (lib.mkTasks {} { run = lib.deno "console.log('hi')\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: deno body uses deno run -A - heredoc";
+      got = contains "deno run -A - <<'" (lib.mkTasks { } { run = lib.deno "console.log('hi')\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: ruby body uses ruby heredoc";
-      got = contains "ruby <<'" (lib.mkTasks {} { run = lib.ruby "puts 'hi'\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: ruby body uses ruby heredoc";
+      got = contains "ruby <<'" (lib.mkTasks { } { run = lib.ruby "puts 'hi'\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: lua body uses lua - heredoc";
-      got = contains "lua - <<'" (lib.mkTasks {} { run = lib.lua "print('hi')\n"; }).runner;
-      expected = true; }
+    {
+      name = "mkTasks runner: lua body uses lua - heredoc";
+      got = contains "lua - <<'" (lib.mkTasks { } { run = lib.lua "print('hi')\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks runner: vars substituted in task body";
+    {
+      name = "mkTasks runner: vars substituted in task body";
       got = contains "echo 9000"
-              (lib.mkTasks { vars = { port = 9000; }; } { run = lib.sh "echo @nix(port)\n"; }).runner;
-      expected = true; }
+        (lib.mkTasks { vars = { port = 9000; }; } { run = lib.sh "echo @nix(port)\n"; }).runner;
+      expected = true;
+    }
 
-    { name = "mkTasks: .tasks is an attrset";
-      got = isAttrs (lib.mkTasks {} { build = lib.sh "make\n"; }).tasks;
-      expected = true; }
+    {
+      name = "mkTasks: .tasks is an attrset";
+      got = isAttrs (lib.mkTasks { } { build = lib.sh "make\n"; }).tasks;
+      expected = true;
+    }
 
-    { name = "mkTasks: .meta is a list";
-      got = isList (lib.mkTasks {} { build = lib.sh "make\n"; }).meta;
-      expected = true; }
+    {
+      name = "mkTasks: .meta is a list";
+      got = isList (lib.mkTasks { } { build = lib.sh "make\n"; }).meta;
+      expected = true;
+    }
 
-    { name = "mkTasks: task text accessible via .tasks.name.text";
-      got = (lib.mkTasks {} { build = lib.sh "make\n"; }).tasks.build.text;
-      expected = "make\n"; }
+    {
+      name = "mkTasks: task text accessible via .tasks.name.text";
+      got = (lib.mkTasks { } { build = lib.sh "make\n"; }).tasks.build.text;
+      expected = "make\n";
+    }
 
     # ----------------------------------------------------------------
     # Complex shebang scenarios
     # ----------------------------------------------------------------
-    { name = "shebang: env -S with multiple flags preserved";
-      got = firstLine (lib.mkScript {} (lib.sh "#!/usr/bin/env -S bash -x --norc\necho hi\n"));
-      expected = "#!/usr/bin/env -S bash -x --norc"; }
+    {
+      name = "shebang: env -S with multiple flags preserved";
+      got = firstLine (lib.mkScript { } (lib.sh "#!/usr/bin/env -S bash -x --norc\necho hi\n"));
+      expected = "#!/usr/bin/env -S bash -x --norc";
+    }
 
-    { name = "shebang: absolute /bin/bash preserved";
-      got = firstLine (lib.mkScript {} (lib.sh "#!/bin/bash\nset -e\necho hi\n"));
-      expected = "#!/bin/bash"; }
+    {
+      name = "shebang: absolute /bin/bash preserved";
+      got = firstLine (lib.mkScript { } (lib.sh "#!/bin/bash\nset -e\necho hi\n"));
+      expected = "#!/bin/bash";
+    }
 
-    { name = "shebang: absolute /bin/sh preserved";
-      got = firstLine (lib.mkScript {} (lib.sh "#!/bin/sh\nset -e\necho hi\n"));
-      expected = "#!/bin/sh"; }
+    {
+      name = "shebang: absolute /bin/sh preserved";
+      got = firstLine (lib.mkScript { } (lib.sh "#!/bin/sh\nset -e\necho hi\n"));
+      expected = "#!/bin/sh";
+    }
 
-    { name = "shebang: uv run with version constraint preserved";
-      got = firstLine (lib.mkScript {} (lib.py "#!/usr/bin/env -S uv run --python 3.12 --script\nprint('hi')\n"));
-      expected = "#!/usr/bin/env -S uv run --python 3.12 --script"; }
+    {
+      name = "shebang: uv run with version constraint preserved";
+      got = firstLine (lib.mkScript { } (lib.py "#!/usr/bin/env -S uv run --python 3.12 --script\nprint('hi')\n"));
+      expected = "#!/usr/bin/env -S uv run --python 3.12 --script";
+    }
 
-    { name = "shebang: nix-shell polyglot shebang preserved";
-      got = firstLine (lib.mkScript {} (lib.sh "#!/usr/bin/env nix-shell\n#!nix-shell -i bash -p hello\necho hi\n"));
-      expected = "#!/usr/bin/env nix-shell"; }
+    {
+      name = "shebang: nix-shell polyglot shebang preserved";
+      got = firstLine (lib.mkScript { } (lib.sh "#!/usr/bin/env nix-shell\n#!nix-shell -i bash -p hello\necho hi\n"));
+      expected = "#!/usr/bin/env nix-shell";
+    }
 
   ];
 
@@ -552,11 +800,13 @@ let
   failures = filter (x: x != null) (map run tests);
   total = length tests;
   nfail = length failures;
-  failReport = concatStringsSep "\n\n" (map (f:
-    "FAIL  ${f.name}\n  got:      ${builtins.toJSON f.got}\n  expected: ${builtins.toJSON f.expected}"
-  ) failures);
+  failReport = concatStringsSep "\n\n" (map
+    (f:
+      "FAIL  ${f.name}\n  got:      ${builtins.toJSON f.got}\n  expected: ${builtins.toJSON f.expected}"
+    )
+    failures);
 
 in
-if failures == []
+if failures == [ ]
 then "ALL ${toString total} TESTS PASSED"
-else builtins.throw "\n\n${failReport}\n\n${toString nfail}/${toString total} FAILED"
+else throw "\n\n${failReport}\n\n${toString nfail}/${toString total} FAILED"
