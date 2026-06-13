@@ -79,33 +79,62 @@ it — that's the problem nixx exists to tame.)
 - `nixx.mkScript { lang?, vars?, deps?, ... } block` — just the script string
 - `nixx.mkScripts` / `nixx.mkTasks` — many scripts / a bash task runner
 
-### Task runner (`nixx.mkTasks`)
-A `just`-style runner where one `nix run .#tasks -- <name>` invocation is a
-single bash process, so env exports made early persist into every later task.
+### Task runner (`writers.mkTasks`)
+A `just`-style runner where one `tasks <name>` invocation is a single bash
+process, so env exports made early persist into every later task.
+
+Use the pkgs-bound `writers.mkTasks` to get a ready-to-use derivation plus
+devShell helpers:
 
 ```nix
-(nixx.mkTasks { name = "tasks"; defaultDeps = [ "nixenv" ]; } {
-  # runs before EVERY task → no more --extra-experimental-features … each time
-  nixenv = nixx.sh ''export NIX_CONFIG="experimental-features = nix-command flakes"'';
-  build  = nixx.task { description = "Build the project"; } (nixx.sh ''nix build'');
-  test   = nixx.task { description = "Run the test suite"; } (nixx.sh ''nix run .#test'');
-  deploy = nixx.task { description = "Deploy production"; } (nixx.sh ''aws s3 sync ...'');
-  check  = nixx.task { deps = [ "build" ]; } (nixx.sh ''  # deps = prerequisite tasks
-    echo ok
-  '');
-}).runner
+let
+  nixx    = inputs.nixx.lib;
+  writers = inputs.nixx.writers pkgs;
+  tasks   = writers.mkTasks { name = "tasks"; defaultDeps = [ "nixenv" ]; } {
+    # runs before EVERY task → no more --extra-experimental-features … each time
+    nixenv = nixx.sh ''export NIX_CONFIG="experimental-features = nix-command flakes"'';
+    build  = nixx.task { description = "Build the project"; } (nixx.sh ''nix build'');
+    test   = nixx.task { description = "Run the test suite"; } (nixx.sh ''nix run .#test'');
+    deploy = nixx.task { description = "Deploy production"; } (nixx.sh ''aws s3 sync ...'');
+    check  = nixx.task { deps = [ "build" ]; } (nixx.sh ''
+      echo ok
+    '');
+  };
+in {
+  packages.tasks    = tasks.runner;        # nix run .#tasks -- build
+  devShells.default = tasks.devShell;      # nix develop → `tasks build`
+  # or extend an existing shell:
+  # devShells.default = tasks.extendShell myExistingShell;
+}
 ```
 
-List the tasks (no arg, `-l`, `--list`, or `help`) — descriptions line up `just`-style:
+After `nix develop`, the `tasks` command is available directly:
 
 ```
-$ nix run .#tasks -- --list
+$ tasks --list
 available tasks:
   build    Build the project
   check
   deploy   Deploy production
   nixenv
   test     Run the test suite
+
+$ tasks build
+```
+
+`writers.mkTasks` returns:
+- **`runner`** — a `pkgs.writeShellApplication` derivation (shellcheck-gated).
+  All per-task `requirements` packages are passed as `runtimeInputs`.
+- **`devShell`** — a `pkgs.mkShell` with `runner` in `packages`.
+- **`extendShell`** — `shell: pkgs.mkShell { inputsFrom = [shell]; packages = [runner]; }`.
+  Merges the runner into an existing shell.
+- **`tasks`** / **`meta`** — same as the pure `nixx.mkTasks` result (see below).
+
+The pure `nixx.mkTasks` (no pkgs) is still available if you only need the
+runner script text:
+
+```nix
+(nixx.mkTasks { name = "tasks"; } { ... }).runner  # → bash script string
 ```
 
 - **`description`** (on `nixx.task`) — a one-line summary shown by `--list`.

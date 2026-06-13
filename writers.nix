@@ -12,6 +12,48 @@ let
   inherit (pkgs) lib stdenv;
 in
 rec {
+  # mkTasks — pkgs-bound wrapper around nixx.mkTasks.  Returns a derivation for
+  # the runner plus two helpers for wiring it into a devShell, so users can write:
+  #
+  #   let tasks = (inputs.nixx.writers pkgs).mkTasks { name = "tasks"; } { ... };
+  #   in {
+  #     packages.tasks   = tasks.runner;       # nix run .#tasks -- build
+  #     devShells.default = tasks.devShell;    # nix develop → `tasks` in PATH
+  #   }
+  #
+  # Or, to extend an existing shell with the runner:
+  #
+  #   devShells.default = tasks.extendShell myExistingShell;
+  #
+  # `runner` is a pkgs.writeShellApplication derivation (shellcheck-gated).
+  # All per-task `requirements` packages are passed as runtimeInputs so
+  # shellcheck can resolve them.  The binary is named after `opts.name`
+  # (defaults to "tasks").
+  mkTasks = opts: taskDefs:
+    let
+      name = opts.name or "tasks";
+      result = nixx.mkTasks opts taskDefs;
+      allRequirements = lib.concatMap
+        (t: t.requirements or [])
+        (lib.attrValues result.tasks);
+      runner = pkgs.writeShellApplication {
+        inherit name;
+        runtimeInputs = allRequirements;
+        text = result.runner;
+      };
+      devShell = pkgs.mkShell {
+        packages = [ runner ];
+      };
+      extendShell = shell: pkgs.mkShell {
+        inputsFrom = [ shell ];
+        packages = [ runner ];
+      };
+    in {
+      inherit runner devShell extendShell;
+      tasks = result.tasks;
+      meta = result.meta;
+    };
+
   # runApplication — ONE entry point. Reads the block's __lang and dispatches
   # to the matching builder. This is the recommended API:
   #
