@@ -173,7 +173,7 @@ let
   py = mkBlock "python"; # python (lint: ruff)
   uv = mkBlock "python-uv"; # python + uv inline deps
   bun = mkBlock "bun"; # typescript/js via bun
-  ts = mkBlock "bun"; # alias: TypeScript reads as `nixx.ts`
+  ts = mkBlock "typescript"; # typescript via tsx
   node = mkBlock "node"; # node (deps via Nix-supplied node_modules)
   deno = mkBlock "deno"; # deno (npm:/jsr: inline deps)
   ruby = mkBlock "ruby";
@@ -228,6 +228,7 @@ let
         else if lang == "python-uv" then via "uv run --no-project -"
         else if lang == "node" then via "node --input-type=module"
         else if lang == "bun" then via "bun run -"
+        else if lang == "typescript" then via "tsx"
         else if lang == "deno" then via "deno run -A -"
         else if lang == "ruby" then via "ruby"
         else if lang == "lua" then via "lua -"
@@ -356,7 +357,7 @@ let
     # TS type annotations use `{ }` not `${ }`, so the only ${} tax is template
     # literals — interfaces/generics/annotations are written 100% raw.
     bun = { shebang = "#!/usr/bin/env bun"; strict = false; pathStyle = "none"; };
-    typescript = { shebang = "#!/usr/bin/env bun"; strict = false; pathStyle = "none"; };
+    typescript = { shebang = "#!/usr/bin/env tsx"; strict = false; pathStyle = "none"; };
   };
 
   # PEP 723 inline metadata block for uv. deps is a list of strings like
