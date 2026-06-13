@@ -780,6 +780,56 @@ let
     }
 
     # ----------------------------------------------------------------
+    # mkTasks — task descriptions (just-style --list)
+    # ----------------------------------------------------------------
+    {
+      name = "task: description from opts stored on block";
+      got = (lib.task { description = "Build it"; } (lib.sh "make\n")).description;
+      expected = "Build it";
+    }
+
+    {
+      name = "task: description defaults to null";
+      got = (lib.task { } (lib.sh "make\n")).description;
+      expected = null;
+    }
+
+    {
+      name = "mkTasks: description accessible via .tasks.name.description";
+      got = (lib.mkTasks { } {
+        build = lib.task { description = "Build it"; } (lib.sh "make\n");
+      }).tasks.build.description;
+      expected = "Build it";
+    }
+
+    {
+      name = "mkTasks: description surfaced in .meta";
+      got =
+        let
+          meta = (lib.mkTasks { } {
+            deploy = lib.task { description = "Deploy production"; } (lib.sh "aws s3 sync\n");
+          }).meta;
+        in (head meta).description;
+      expected = "Deploy production";
+    }
+
+    {
+      name = "mkTasks runner: --list shows the description text";
+      got = contains "Deploy production" (lib.mkTasks { } {
+        deploy = lib.task { description = "Deploy production"; } (lib.sh "aws s3 sync\n");
+      }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: --list still lists a task with no description";
+      got = contains "printf '  %s\\n' 'build'" (lib.mkTasks { } {
+        build = lib.sh "make\n";
+      }).runner;
+      expected = true;
+    }
+
+    # ----------------------------------------------------------------
     # Complex shebang scenarios
     # ----------------------------------------------------------------
     {

@@ -206,15 +206,15 @@
           nix-tasks =
             let
               inherit ((nixx.mkTasks { name = "nix-tasks"; } {
-                fmt = nixx.sh ''
+                fmt = nixx.task { description = "Auto-format all .nix files"; } (nixx.sh ''
                   nixpkgs-fmt flake.nix lib.nix writers.nix tests/lib-tests.nix
-                '';
-                fmt-check = nixx.sh ''
+                '');
+                fmt-check = nixx.task { description = "Verify formatting (CI)"; } (nixx.sh ''
                   nixpkgs-fmt --check flake.nix lib.nix writers.nix tests/lib-tests.nix
-                '';
-                lint = nixx.sh ''
+                '');
+                lint = nixx.task { description = "statix static analysis"; } (nixx.sh ''
                   statix check .
-                '';
+                '');
                 lint-nixf = nixx.sh ''
                   echo "nixf-tidy --variable-lookup"
                   rc=0
@@ -231,7 +231,7 @@
                   done
                   exit $rc
                 '';
-                check = nixx.task { deps = [ "fmt-check" "lint" "lint-nixf" ]; } (nixx.sh ''
+                check = nixx.task { description = "fmt-check + lint + lint-nixf"; deps = [ "fmt-check" "lint" "lint-nixf" ]; } (nixx.sh ''
                   echo "all nix checks passed"
                 '');
               })) runner;

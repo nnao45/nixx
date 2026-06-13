@@ -87,13 +87,30 @@ single bash process, so env exports made early persist into every later task.
 (nixx.mkTasks { name = "tasks"; defaultDeps = [ "nixenv" ]; } {
   # runs before EVERY task → no more --extra-experimental-features … each time
   nixenv = nixx.sh ''export NIX_CONFIG="experimental-features = nix-command flakes"'';
-  build  = nixx.sh ''nix build'';                       # NIX_CONFIG already set
+  build  = nixx.task { description = "Build the project"; } (nixx.sh ''nix build'');
+  test   = nixx.task { description = "Run the test suite"; } (nixx.sh ''nix run .#test'');
+  deploy = nixx.task { description = "Deploy production"; } (nixx.sh ''aws s3 sync ...'');
   check  = nixx.task { deps = [ "build" ]; } (nixx.sh ''  # deps = prerequisite tasks
     echo ok
   '');
 }).runner
 ```
 
+List the tasks (no arg, `-l`, `--list`, or `help`) — descriptions line up `just`-style:
+
+```
+$ nix run .#tasks -- --list
+available tasks:
+  build    Build the project
+  check
+  deploy   Deploy production
+  nixenv
+  test     Run the test suite
+```
+
+- **`description`** (on `nixx.task`) — a one-line summary shown by `--list`.
+  Tasks without one are still listed by name. Also exposed programmatically on
+  `(mkTasks ...).tasks.<name>.description` and each `(mkTasks ...).meta` entry.
 - **`deps`** (on `nixx.task`) — prerequisite *tasks*, run once each before the body
   (renamed from `needs`).
 - **`requirements`** (on `nixx.task`) — *packages* whose `/bin` join `PATH`
