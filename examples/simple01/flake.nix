@@ -20,54 +20,41 @@
         apps = mkApps { } {
           # ── bash: show dev-environment tool versions ──────────────────────
           # nix run .#status
-          status = n.app
-            {
-              runtimeInputs = [ pkgs.uv pkgs.bun pkgs.nodejs ];
-            }
-            (n.sh ''
-              echo "=== dev environment ==="
-              printf "  home    %s\n" "${HOME}"
-              printf "  python  %s\n" "$(python3 --version 2>/dev/null || echo n/a)"
-              printf "  uv      %s\n" "$(uv --version      2>/dev/null || echo n/a)"
-              printf "  bun     %s\n" "$(bun --version     2>/dev/null || echo n/a)"
-              printf "  node    %s\n" "$(node --version    2>/dev/null || echo n/a)"
-            '');
+          status = n.sh { runtimeInputs = [ pkgs.uv pkgs.bun pkgs.nodejs ]; } ''
+            echo "=== dev environment ==="
+            printf "  home    %s\n" "${HOME}"
+            printf "  python  %s\n" "$(python3 --version 2>/dev/null || echo n/a)"
+            printf "  uv      %s\n" "$(uv --version      2>/dev/null || echo n/a)"
+            printf "  bun     %s\n" "$(bun --version     2>/dev/null || echo n/a)"
+            printf "  node    %s\n" "$(node --version    2>/dev/null || echo n/a)"
+          '';
 
           # ── python/uv: project health report (deps from ./py) ─────────────
           # nix run .#report
-          report = n.app
-            {
-              projectRoot = ./py;
-            }
-            (n.uv ''
-              from rich import print
-              from rich.table import Table
-              t = Table(title="python project")
-              t.add_column("check")
-              t.add_column("result")
-              t.add_row("deps",   "[green]ok[/]")
-              t.add_row("python", "[green]ok[/]")
-              print(t)
-            '');
+          report = n.uv { projectRoot = ./py; } ''
+            from rich import print
+            from rich.table import Table
+            t = Table(title="python project")
+            t.add_column("check")
+            t.add_column("result")
+            t.add_row("deps",   "[green]ok[/]")
+            t.add_row("python", "[green]ok[/]")
+            print(t)
+          '';
 
           # ── typescript/bun: project validation (deps from ./ts) ───────────
           # nix run .#validate
-          validate = n.app
-            {
-              projectRoot = ./ts;
-              compile = true;
+          validate = n.bun { projectRoot = ./ts; compile = true; } ''
+            import chalk from "chalk";
+            const checks: [string, boolean][] = [
+              ["python env",  true],
+              ["ts env",      true],
+              ["nix flake",   true],
+            ];
+            for (const [label, ok] of checks) {
+              console.log((ok ? chalk.green("✓") : chalk.red("✗")) + "  " + label);
             }
-            (n.bun ''
-              import chalk from "chalk";
-              const checks: [string, boolean][] = [
-                ["python env",  true],
-                ["ts env",      true],
-                ["nix flake",   true],
-              ];
-              for (const [label, ok] of checks) {
-                console.log((ok ? chalk.green("✓") : chalk.red("✗")) + "  " + label);
-              }
-            '');
+          '';
         };
         inherit (apps) status report validate;
 

@@ -7,12 +7,17 @@ read from source, never escaped. No preprocessor, no codegen; files stay valid
 ```nix
 {
   packages = with nixx.for pkgs; mkApps { } {
-    deploy = app { runtimeInputs = [ pkgs.rsync ]; } (bash ''
-      echo ${HOME}                     # no ''${ } — read from source, not evaluated
+    deploy = bash { runtimeInputs = [ pkgs.rsync ]; } ''
+      echo "deploying from ${HOME}"       # ${} is shell's — no ''${ } escape
       rsync -a ./dist/ "$HOST:/srv/"
-    '');
-    ci = node ''
-      console.log(`building for ${process.env.NODE_ENV}`);
+    '';
+    report = uv { deps = [ "rich" ]; } ''
+      from rich import print
+      print("[bold green]done[/]")
+    '';
+    validate = bun { compile = true; } ''
+      const ok: boolean = true;
+      console.log(`status: ${ok}`);       # TS template literal, verbatim
     '';
   };
 }
@@ -65,6 +70,39 @@ programmatic guard — in [API.md](./API.md).)
 `with` on the flake output that builds your tasks; evaluated code still errors
 clearly at runtime.
 
+## Per-app options — inline, no wrapper
+Pass options directly to the block constructor as a first attrset.
+No `app { } (...)` wrapper needed:
+
+```nix
+with nixx.for pkgs;
+mkApps { } {
+  # bash — add tools to PATH
+  fetch  = bash { runtimeInputs = [ pkgs.curl pkgs.jq ]; } ''
+    curl -s https://api.example.com | jq .
+  '';
+
+  # python/uv — inline deps (PEP 723) or point at a project manifest
+  report = uv { deps = [ "rich>=13" ]; } ''
+    from rich import print
+    print("[green]ok[/]")
+  '';
+
+  # bun — compile to a self-contained binary
+  check  = bun { compile = true; } ''
+    const r: { ok: boolean } = { ok: true };
+    console.log(`status: ${r.ok}`);
+  '';
+
+  # point at the project's own pyproject.toml + uv.lock
+  serve  = uv { projectRoot = ./.; } ''
+    import myapp; myapp.start()
+  '';
+}
+```
+
+`app { ... } block` still works as a backwards-compatible composition helper.
+
 ## Apps and shells
 `mkApps` builds store binaries. `mkTasks` builds a just-style runner for local
 workflows. They compose: put app derivations in `vars`, then call them from
@@ -75,10 +113,10 @@ with nixx.for pkgs;
 let
   apps = mkApps { } {
     status = bash ''echo "${USER} in ${PWD}"'';
-    report = app { deps = [ "rich" ]; } (uv ''
+    report = uv { deps = [ "rich" ]; } ''
       from rich import print
       print("[green]ok[/]")
-    '');
+    '';
   };
   tasks = mkTasks { name = "tasks"; vars = apps; } {
     check = bash ''
@@ -115,7 +153,9 @@ in {
 ```nix
 with nixx.for pkgs;
 let
-  apps = mkApps { } { envcheck = app { runtimeInputs = [ pkgs.jq ]; } (bash ''jq --version''); };
+  apps  = mkApps { } {
+    envcheck = bash { runtimeInputs = [ pkgs.jq ]; } ''jq --version'';
+  };
   tasks = mkTasks { name = "tasks"; } { build = bash ''echo ${OUT_DIR:-dist}''; };
 in {
   packages = apps // { default = tasks.runner; };
@@ -172,8 +212,8 @@ $ tasks build
 pure (no-pkgs) `nixx.mkTasks` → [API.md](./API.md).
 
 ## More
-- **Multi-language & shippable binaries** — `mkApps`, `app`, `mkApp`, the constructor
-  table, `projectRoot` dependency wiring, `mkScript(s)`, `vars` markers:
+- **Multi-language & shippable binaries** — `mkApps`, inline opts (`bash { runtimeInputs = […] } ''…''`),
+  `projectRoot` dependency wiring, `mkScript(s)`, `vars` markers, language table:
   **[API.md](./API.md)**.
 - **Linter source-mapping** — blocks carry their source position, so
   shellcheck / ruff diagnostics remap back to the exact `.nix` `line:col`, even

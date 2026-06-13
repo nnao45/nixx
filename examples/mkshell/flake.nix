@@ -20,10 +20,10 @@
       with nixx.for nixpkgs.legacyPackages.${system};
       let
         apps = mkApps { } {
-          envcheck = app { runtimeInputs = [ pkgs.jq ]; } (bash ''
+          envcheck = bash { runtimeInputs = [ pkgs.jq ]; } ''
             jq --version
             echo "shell user=${USER}"
-          '');
+          '';
         };
 
         tasks = mkTasks { name = "tasks"; } {

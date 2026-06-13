@@ -1362,6 +1362,38 @@ let
       expected = "echo \${#VAR}\n";
     }
 
+    # ---- inline per-app opts: bash { opts } ''body'' ----
+    # The opts form returns a curried function when the first arg is an attrset;
+    # the body is then source-read exactly as with the plain `bash ''...''` form.
+
+    {
+      name = "inline-opts: bash { } ''body'' sets __appOptions on block";
+      got =
+        (lib.bash { runtimeInputs = [ ]; } ''echo hello'')
+          .__appOptions or { };
+      expected = { runtimeInputs = [ ]; };
+    }
+
+    {
+      name = "inline-opts: body is still source-read with \${VAR}";
+      got = with lib.runtimeScope;
+        (lib.mkTasks { } {
+          dev = lib.bash { } ''
+            echo ${HOME}
+          '';
+        }).tasks.dev.text;
+      expected = "echo \${HOME}\n";
+    }
+
+    {
+      name = "inline-opts: app merges inline opts with app opts";
+      got =
+        (lib.app { compile = true; }
+          (lib.bash { runtimeInputs = [ ]; } ''echo hello''))
+            .__appOptions or { };
+      expected = { runtimeInputs = [ ]; compile = true; };
+    }
+
   ];
 
   run = t: if t.got == t.expected then null else t;
