@@ -78,6 +78,28 @@ it — that's the problem nixx exists to tame.)
   store-path executable, dispatching on the block's language
 - `nixx.mkScript { lang?, vars?, deps?, ... } block` — just the script string
 - `nixx.mkScripts` / `nixx.mkTasks` — many scripts / a bash task runner
+
+### Task runner (`nixx.mkTasks`)
+A `just`-style runner where one `nix run .#tasks -- <name>` invocation is a
+single bash process, so env exports made early persist into every later task.
+
+```nix
+(nixx.mkTasks { name = "tasks"; defaultDeps = [ "nixenv" ]; } {
+  # runs before EVERY task → no more --extra-experimental-features … each time
+  nixenv = nixx.sh ''export NIX_CONFIG="experimental-features = nix-command flakes"'';
+  build  = nixx.sh ''nix build'';                       # NIX_CONFIG already set
+  check  = nixx.task { deps = [ "build" ]; } (nixx.sh ''  # deps = prerequisite tasks
+    echo ok
+  '');
+}).runner
+```
+
+- **`deps`** (on `nixx.task`) — prerequisite *tasks*, run once each before the body
+  (renamed from `needs`).
+- **`requirements`** (on `nixx.task`) — *packages* whose `/bin` join `PATH`
+  (renamed from the old `deps`).
+- **`defaultDeps`** (on `mkTasks`) — tasks prepended to every task's `deps`;
+  the default-dep tasks themselves are exempt (no self-loop).
 - low-level builders in `writers.nix`: `writeBashApplication`,
   `writeUvApplication`, `writeBunApplication`, `writeNodeApplication`
 

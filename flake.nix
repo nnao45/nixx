@@ -36,86 +36,12 @@
           let ok = import ./tests/lib-tests.nix;
           in runApplication { name = "test"; } (nixx.sh "echo ${nixx.shq ok}\n");
 
-      in rec {
+      in
+      rec {
         # ---- example applications, one per language ----
         # Build:  nix build .#<name>
         # Run:    nix run   .#<name>
         packages = {
-
-          # bash — deps via runtimeInputs, shellcheck-gated
-          greet = runApplication {
-            name = "greet";
-            runtimeInputs = [ pkgs.hello ];
-          } (nixx.sh ''
-            hello -g "hi from nixx bash"
-            for d in */; do echo "saw $d"; done
-          '');
-
-          # python + uv — deps from the project's pyproject.toml + uv.lock
-          report = runApplication {
-            name = "report";
-            projectRoot = ./examples/py;
-          } (nixx.uv ''
-            from rich import print
-            from rich.table import Table
-            t = Table(title="nixx report")
-            t.add_column("lang"); t.add_column("note")
-            t.add_row("python-uv", "deps from project pyproject.toml")
-            print(t)
-          '');
-
-          # inline PEP 723 deps — no project dir needed
-          report-inline = runApplication {
-            name = "report-inline";
-            deps = [ "rich>=13" ];
-          } (nixx.uv ''
-            from rich import print
-            print("[bold]inline deps[/] for throwaway scripts")
-          '');
-
-          # typescript via bun — compiled to a self-contained binary
-          validate = runApplication {
-            name = "validate";
-            compile = true;
-          } (nixx.ts ''
-            interface User { name: string; age: number; }
-            const users: User[] = [
-              { name: "naoya", age: 30 },
-              { name: "kid", age: 10 },
-            ];
-            for (const u of users) {
-              const ok = u.age >= 18;
-              console.log(`''${u.name}: ''${ok ? "ok" : "too young"}`);
-            }
-          '');
-
-          # typescript via bun — deps from project package.json
-          validate-project = runApplication {
-            name = "validate-project";
-            projectRoot = ./examples/ts;
-            compile = true;
-          } (nixx.ts ''
-            import chalk from "chalk";
-            interface User { name: string; age: number; }
-            const users: User[] = [
-              { name: "naoya", age: 30 },
-              { name: "kid", age: 10 },
-            ];
-            for (const u of users) {
-              const ok = u.age >= 18;
-              const label = ok ? chalk.green("ok") : chalk.red("too young");
-              console.log(`''${u.name}: ''${label}`);
-            }
-          '');
-
-          # node — node --check syntax gate
-          ping = runApplication {
-            name = "ping";
-          } (nixx.node ''
-            const now = new Date().toISOString();
-            console.log(`pong @ ''${now}`);
-          '');
-
           # lib unit tests — nix run .#test
           test = libTests;
 
@@ -136,7 +62,7 @@
                 lint = nixx.sh ''
                   statix check .
                 '';
-                check = nixx.task { needs = [ "fmt-check" "lint" ]; } (nixx.sh ''
+                check = nixx.task { deps = [ "fmt-check" "lint" ]; } (nixx.sh ''
                   echo "all nix checks passed"
                 '');
               }).runner;
@@ -151,10 +77,12 @@
         };
 
         # nix run .#<name>  (auto-wired from packages)
-        apps = builtins.mapAttrs (name: pkg: {
-          type = "app";
-          program = "${pkg}/bin/${name}";
-        }) (builtins.removeAttrs packages [ "default" ])
+        apps = builtins.mapAttrs
+          (name: pkg: {
+            type = "app";
+            program = "${pkg}/bin/${name}";
+          })
+          (builtins.removeAttrs packages [ "default" ])
         // { default = apps.report; };
 
         # nix fmt — format all Nix files in the repo
@@ -162,8 +90,13 @@
 
         devShells.default = pkgs.mkShell {
           packages = [
-            pkgs.uv pkgs.ruff pkgs.bun pkgs.nodejs
-            pkgs.shellcheck pkgs.nixpkgs-fmt pkgs.statix
+            pkgs.uv
+            pkgs.ruff
+            pkgs.bun
+            pkgs.nodejs
+            pkgs.shellcheck
+            pkgs.nixpkgs-fmt
+            pkgs.statix
           ];
           shellHook = ''
             echo "nixx dev shell — uv $(uv --version 2>/dev/null), bun $(bun --version 2>/dev/null)"
