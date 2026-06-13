@@ -193,7 +193,7 @@
         e2eLangSh = runApplication { name = "e2e-sh"; }
           (nixx.sh ''echo "hello from bash"'');
 
-        e2eLangPy = runApplication { name = "e2e-py"; }
+        e2eLangPy = runApplication { name = "e2e-py"; projectRoot = ./tests/e2e-py; }
           (nixx.uv ''print("hello from python-uv")'');
 
         e2eLangBun = runApplication { name = "e2e-bun"; compile = true; }
