@@ -830,6 +830,92 @@ let
     }
 
     # ----------------------------------------------------------------
+    # Task groups (--list grouped display)
+    # ----------------------------------------------------------------
+
+    {
+      name = "task: group from opts stored on block";
+      got = (lib.task { group = "release"; } (lib.sh "deploy\n")).group;
+      expected = "release";
+    }
+
+    {
+      name = "task: group defaults to null";
+      got = (lib.task { } (lib.sh "make\n")).group;
+      expected = null;
+    }
+
+    {
+      name = "mkTasks: group accessible via .tasks.name.group";
+      got = (lib.mkTasks { } {
+        deploy = lib.task { group = "release"; } (lib.sh "aws s3 sync\n");
+      }).tasks.deploy.group;
+      expected = "release";
+    }
+
+    {
+      name = "mkTasks: group surfaced in .meta";
+      got =
+        let meta = (lib.mkTasks { } {
+              deploy = lib.task { group = "release"; } (lib.sh "aws s3 sync\n");
+            }).meta;
+        in (head meta).group;
+      expected = "release";
+    }
+
+    {
+      name = "mkTasks runner: grouped --list emits group header";
+      got = contains "printf '%s\\n' 'release:'" (lib.mkTasks { } {
+        deploy = lib.task { description = "Deploy production"; group = "release"; } (lib.sh "aws s3 sync\n");
+      }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: grouped --list emits task under group";
+      got = contains "Deploy production" (lib.mkTasks { } {
+        deploy = lib.task { description = "Deploy production"; group = "release"; } (lib.sh "aws s3 sync\n");
+      }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: grouped --list omits 'available tasks:' header";
+      got = contains "available tasks:" (lib.mkTasks { } {
+        deploy = lib.task { group = "release"; } (lib.sh "aws s3 sync\n");
+      }).runner;
+      expected = false;
+    }
+
+    {
+      name = "mkTasks runner: grouped --list emits blank-line separator between groups";
+      got = contains "printf '\\n'" (lib.mkTasks { } {
+        deploy = lib.task { group = "release"; } (lib.sh "aws s3 sync\n");
+        build  = lib.task { group = "dev"; }     (lib.sh "make\n");
+      }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: multiple groups both emit their headers";
+      got =
+        let r = (lib.mkTasks { } {
+              deploy = lib.task { group = "release"; } (lib.sh "aws s3 sync\n");
+              build  = lib.task { group = "dev"; }     (lib.sh "make\n");
+            }).runner;
+        in contains "printf '%s\\n' 'release:'" r && contains "printf '%s\\n' 'dev:'" r;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: ungrouped tasks when no groups uses flat 'available tasks:'";
+      got = contains "available tasks:" (lib.mkTasks { } {
+        build = lib.sh "make\n";
+      }).runner;
+      expected = true;
+    }
+
+    # ----------------------------------------------------------------
     # Complex shebang scenarios
     # ----------------------------------------------------------------
     {
