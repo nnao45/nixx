@@ -112,20 +112,24 @@
             '');
           }).runner;
 
+        # Volatile state is normalized per task: the runner is ONE bash process
+        # (so env exports persist — see e2e-combo), but cwd and shell options are
+        # re-asserted at each task's entry, so a prior task's `cd` / `set +u`
+        # must NOT leak into a dependent task.
         e2eStrict = mkE2e "e2e-strict"
           (nixx.mkTasks { name = "e2e-strict"; } {
-            disable = nixx.sh ''set +euo pipefail'';
-            strict_on = nixx.task { strict = true; deps = [ "disable" ]; } (nixx.sh ''
-              case "$-" in *u*) ;; *) echo "FAIL: -u not set with strict=true"; exit 1 ;; esac
-              case "$-" in *e*) ;; *) echo "FAIL: -e not set with strict=true"; exit 1 ;; esac
-              echo "PASS: strict=true restores -euo pipefail"
+            loosen = nixx.sh ''set +u'';
+            reasserted = nixx.task { deps = [ "loosen" ]; } (nixx.sh ''
+              case "$-" in *u*) ;; *) echo "FAIL: -u leaked off from a prior task"; exit 1 ;; esac
+              case "$-" in *e*) ;; *) echo "FAIL: -e leaked off from a prior task"; exit 1 ;; esac
+              echo "PASS: shell options re-asserted per task (no leak)"
             '');
-            strict_off = nixx.sh ''
-              UNDEF=''${UNDEF:-ok}
-              test "$UNDEF" = "ok" || { echo "FAIL: unexpected UNDEF=$UNDEF"; exit 1; }
-              echo "PASS: strict=false allows undefined vars"
-            '';
-            all = nixx.task { deps = [ "strict_on" "strict_off" ]; } (nixx.sh ''
+            chdir = nixx.task { cwd = "/"; } (nixx.sh ''test "$PWD" = "/"'');
+            cwd_reset = nixx.task { deps = [ "chdir" ]; } (nixx.sh ''
+              test "$PWD" != "/" || { echo "FAIL: dep's cd / leaked into this task"; exit 1; }
+              echo "PASS: cwd reset to invocation dir (no leak)"
+            '');
+            all = nixx.task { deps = [ "reasserted" "cwd_reset" ]; } (nixx.sh ''
               echo "=== e2e-strict: ALL PASSED ==="
             '');
           }).runner;

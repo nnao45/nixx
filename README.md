@@ -106,8 +106,11 @@ in devenv.lib.mkShell {                 # + inherit inputs pkgs; — see example
 ## Task runner
 `mkTasks` is a `just`-style runner: one `tasks <name>` invocation is a **single
 bash process**, so an `export` in an early task (or `defaultDeps`/`env`) persists
-into every later task. Tasks support `deps` (just-style prerequisites), `group`,
-`strict` (`set -euo pipefail`), per-task `requirements` / `cwd` / `env`.
+into every later task. **Only env crosses task boundaries** — cwd and shell
+options are normalized at each task's entry (every bash task is `set -euo
+pipefail`; a dep's `cd` or `set +u` can't leak in), so tasks stay predictable.
+Tasks support `deps` (just-style prerequisites), `group`, per-task
+`requirements` / `cwd` / `env`.
 
 ```
 $ tasks --list

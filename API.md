@@ -116,7 +116,7 @@ let
       requirements = [ pkgs.awscli2 ];
       cwd          = ./infra;
     } (nixx.sh ''aws s3 sync ...'');
-    check  = nixx.task { deps = [ "build" ]; strict = true; } (nixx.sh ''
+    check  = nixx.task { deps = [ "build" ]; } (nixx.sh ''
       echo ok
     '');
   };
@@ -163,8 +163,16 @@ script text or a body's `.text`:
 | `deps` | `[]` | prerequisite task names run (once each) before this body |
 | `requirements` | `[]` | packages whose `/bin` join `PATH` for this task |
 | `env` | `{}` | attrset of shell env vars exported before the body; merged with global `mkTasks env`, this wins on conflict |
-| `cwd` | `null` | working directory (`cd` to this path before the body runs) |
-| `strict` | `false` | prepend `set -euo pipefail` to a bash task body |
+| `cwd` | `null` | working directory; the runner `cd`s here after first resetting to the invocation dir (a dep's `cwd` never leaks in) |
+
+There is intentionally **no per-task `strict`**: the runner is one bash process,
+so it re-asserts `set -euo pipefail` at every bash task's entry. Every task is
+strict, and a prior task's `set +u` can't leak in. If a specific body needs to
+tolerate an unset var, do it locally (`${VAR:-}` or a scoped `set +u; …; set -u`).
+
+**Positional args** (`tasks <name> a b c`) reach **bash** task bodies as `$@`
+(via `shift; task_<name> "$@"`). Non-bash bodies run as scripts through a
+heredoc and do **not** receive `$@`; pass data to them via `env` instead.
 
 ## Interpolation (`vars`)
 To splice an actual **Nix** value into a (source-read) body, use a marker —

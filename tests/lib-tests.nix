@@ -712,6 +712,35 @@ let
       expected = true;
     }
 
+    # ---- volatile state is normalized per task (env persists; cwd + shell
+    # options do NOT leak across deps in the single bash process) ----
+    {
+      name = "mkTasks runner: captures invocation cwd in _NIXX_CWD";
+      got = contains "_NIXX_CWD=\"$PWD\"" (lib.mkTasks { } { build = lib.sh "make\n"; }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: each task resets cwd to the invocation dir";
+      got = contains "cd -- \"$_NIXX_CWD\"" (lib.mkTasks { } { build = lib.sh "make\n"; }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: bash task re-asserts set -euo pipefail then resets cwd";
+      got = contains "  set -euo pipefail\n  cd -- \"$_NIXX_CWD\""
+        (lib.mkTasks { } { build = lib.sh "make\n"; }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: per-task cwd still applied after the reset";
+      got =
+        let r = (lib.mkTasks { } { build = lib.task { cwd = "/srv"; } (lib.sh "make\n"); }).runner;
+        in contains "cd -- \"$_NIXX_CWD\"\n  cd -- '/srv'" r;
+      expected = true;
+    }
+
     {
       name = "mkTasks runner: python body uses python3 heredoc";
       got = contains "python3 <<'" (lib.mkTasks { } { run = lib.py "print('hi')\n"; }).runner;
