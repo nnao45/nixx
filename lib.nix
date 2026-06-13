@@ -330,10 +330,10 @@ let
       esac
     '';
 
-  mkTasks = { name ? "tasks", vars ? { }, defaultDeps ? [ ] }: taskAttrs:
+  mkTasks = { name ? "tasks", vars ? { }, defaultDeps ? [ ], env ? { } }: taskAttrs:
     let
       full = builtins.mapAttrs
-        (_: v: let b = normalize v; in b // { text = substVars vars b.text; })
+        (_: v: let b = normalize v; in b // { text = substVars vars b.text; env = env // b.env; })
         taskAttrs;
       # resolve the source line where each task's body starts, for shellcheck remap
       lineOf = n:

@@ -916,6 +916,109 @@ let
     }
 
     # ----------------------------------------------------------------
+    # Task env — per-task and global environment variables
+    # ----------------------------------------------------------------
+    {
+      name = "task: env from opts stored on block";
+      got = (lib.task { env = { FOO = "bar"; }; } (lib.sh "echo\n")).env;
+      expected = { FOO = "bar"; };
+    }
+
+    {
+      name = "task: env defaults to {}";
+      got = (lib.task { } (lib.sh "echo\n")).env;
+      expected = { };
+    }
+
+    {
+      name = "mkTasks runner: env var exported in task function";
+      got = contains "export FOO='bar'" (lib.mkTasks { } {
+        run = lib.task { env = { FOO = "bar"; }; } (lib.sh "echo hi\n");
+      }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: multiple env vars all exported";
+      got =
+        let r = (lib.mkTasks { } {
+              run = lib.task { env = { FOO = "hello"; BAR = "world"; }; } (lib.sh "echo hi\n");
+            }).runner;
+        in contains "export FOO=" r && contains "export BAR=" r;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: env value with spaces is shell-quoted";
+      got = contains "export GREETING='hello world'" (lib.mkTasks { } {
+        run = lib.task { env = { GREETING = "hello world"; }; } (lib.sh "echo hi\n");
+      }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: env value with single quote is POSIX-escaped";
+      got = contains "export MSG='it'\\''s fine'" (lib.mkTasks { } {
+        run = lib.task { env = { MSG = "it's fine"; }; } (lib.sh "echo hi\n");
+      }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: no env export when task has no env";
+      got = contains "export" (lib.mkTasks { } {
+        run = lib.sh "echo hi\n";
+      }).runner;
+      expected = false;
+    }
+
+    {
+      name = "mkTasks global env: applied to task with no per-task env";
+      got = contains "export GLOBAL='1'" (lib.mkTasks { env = { GLOBAL = "1"; }; } {
+        run = lib.sh "echo hi\n";
+      }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks global env: applied to all tasks";
+      got =
+        let r = (lib.mkTasks { env = { SHARED = "yes"; }; } {
+              task1 = lib.sh "echo one\n";
+              task2 = lib.sh "echo two\n";
+            }).runner;
+            count = length (filter (l: l == "  export SHARED='yes'") (splitLines r));
+        in count == 2;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks global env: per-task env overrides global for same key";
+      got = contains "export FOO='local'" (lib.mkTasks { env = { FOO = "global"; }; } {
+        run = lib.task { env = { FOO = "local"; }; } (lib.sh "echo hi\n");
+      }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks global env: global value absent when overridden by per-task";
+      got = contains "export FOO='global'" (lib.mkTasks { env = { FOO = "global"; }; } {
+        run = lib.task { env = { FOO = "local"; }; } (lib.sh "echo hi\n");
+      }).runner;
+      expected = false;
+    }
+
+    {
+      name = "mkTasks global env: per-task extra keys merged with global";
+      got =
+        let r = (lib.mkTasks { env = { GLOBAL = "g"; }; } {
+              run = lib.task { env = { LOCAL = "l"; }; } (lib.sh "echo hi\n");
+            }).runner;
+        in contains "export GLOBAL=" r && contains "export LOCAL=" r;
+      expected = true;
+    }
+
+    # ----------------------------------------------------------------
     # Complex shebang scenarios
     # ----------------------------------------------------------------
     {
