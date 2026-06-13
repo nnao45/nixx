@@ -8,21 +8,16 @@
 
   outputs = { self, nixpkgs, flake-utils }:
     let
-      # ---- the library itself (pure, pkgs-independent) ----
       lib = import ./lib.nix;
-
-      # exposed so consumers can `nixx.lib.mkScript`, `nixx.lib.bun`, etc.
-      # and build their own apps via `nixx.writers pkgs`.
       writersFor = pkgs: import ./writers.nix { inherit pkgs; nixx = lib; };
     in
     {
-      # Consumable outputs that don't depend on a system:
+      # System-independent outputs consumed by flake users:
       #   inputs.nixx.lib.bun ''...''
       #   inputs.nixx.writers pkgs
       lib = lib;
       writers = writersFor;
 
-      # A reusable overlay isn't needed, but expose the writers factory.
       overlays.default = final: prev: {
         nixx = { lib = lib; writers = writersFor final; };
       };
@@ -33,28 +28,33 @@
         pkgs = import nixpkgs { inherit system; };
         nixx = lib;
         inherit (writersFor pkgs) runApplication;
-      in
-      rec {
+
+        # Pure-Nix lib tests, evaluated at flake-eval time.
+        # A failing assertion throws here and prevents the flake from building.
+        # The resulting script is shellcheck-gated via nixx's own runApplication.
+        libTests =
+          let ok = import ./tests/lib-tests.nix;
+          in runApplication { name = "test"; } (nixx.sh "echo ${nixx.shq ok}\n");
+
+      in rec {
         # ---- example applications, one per language ----
-        # Build any of these with:  nix build .#<name>
-        # Run with:                 nix run   .#<name>
+        # Build:  nix build .#<name>
+        # Run:    nix run   .#<name>
         packages = {
 
-          # bash — deps via runtimeInputs, shellcheck-gated by writeShellApplication
+          # bash — deps via runtimeInputs, shellcheck-gated
           greet = runApplication {
             name = "greet";
             runtimeInputs = [ pkgs.hello ];
           } (nixx.sh ''
             hello -g "hi from nixx bash"
-            for d in */; do echo "saw $d"; done   # */ works in string-mode
+            for d in */; do echo "saw $d"; done
           '');
 
-          # python + uv — deps from the PROJECT's pyproject.toml + uv.lock.
-          # The manifest is the single source of truth; nixx declares nothing.
-          # (Drop-in: point projectRoot at a dir with pyproject.toml + uv.lock.)
+          # python + uv — deps from the project's pyproject.toml + uv.lock
           report = runApplication {
             name = "report";
-            projectRoot = ./examples/py;   # owns pyproject.toml + uv.lock
+            projectRoot = ./examples/py;
           } (nixx.uv ''
             from rich import print
             from rich.table import Table
@@ -64,7 +64,7 @@
             print(t)
           '');
 
-          # quick one-off variant: inline deps via PEP 723 (no project needed)
+          # inline PEP 723 deps — no project dir needed
           report-inline = runApplication {
             name = "report-inline";
             deps = [ "rich>=13" ];
@@ -89,7 +89,7 @@
             }
           '');
 
-          # typescript via bun — deps from project package.json + bun.lockb
+          # typescript via bun — deps from project package.json
           validate-project = runApplication {
             name = "validate-project";
             projectRoot = ./examples/ts;
@@ -108,7 +108,7 @@
             }
           '');
 
-          # node — deps supplied by Nix (here: none), node --check gate
+          # node — node --check syntax gate
           ping = runApplication {
             name = "ping";
           } (nixx.node ''
@@ -116,17 +116,19 @@
             console.log(`pong @ ''${now}`);
           '');
 
+          # lib unit tests — nix run .#test
+          test = libTests;
+
           default = packages.report;
         };
 
-        # `nix run .#<name>` wiring
+        # nix run .#<name>  (auto-wired from packages)
         apps = builtins.mapAttrs (name: pkg: {
           type = "app";
           program = "${pkg}/bin/${name}";
         }) (builtins.removeAttrs packages [ "default" ])
         // { default = apps.report; };
 
-        # ---- dev shell: tools for editing & linting nixx scripts ----
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.uv pkgs.ruff pkgs.bun pkgs.nodejs
@@ -134,23 +136,11 @@
           ];
           shellHook = ''
             echo "nixx dev shell — uv $(uv --version 2>/dev/null), bun $(bun --version 2>/dev/null)"
-            echo "build an example:  nix build .#report  (or greet/validate/ping)"
+            echo "run tests: nix run .#test"
           '';
         };
 
-        # ---- checks: `nix flake check` lints every example via nixx-check ----
-        # Each app already gates itself at build time; this is an extra pass.
-        checks = packages // {
-          # Pure-Nix unit tests for lib.nix.
-          # Evaluated at nix eval / nix flake check time; a failing test throws and
-          # aborts evaluation.  The derivation just records the "ALL N TESTS PASSED"
-          # string so `nix build .#checks.*.lib-tests` has a concrete output.
-          lib-tests =
-            let result = import ./tests/lib-tests.nix;
-            in pkgs.runCommand "nixx-lib-tests" {} ''
-              mkdir -p $out
-              echo ${builtins.toJSON result} > $out/result
-            '';
-        };
+        # nix flake check — all example apps + lib unit tests
+        checks = packages // { lib-tests = libTests; };
       });
 }

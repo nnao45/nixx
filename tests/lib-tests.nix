@@ -1,23 +1,17 @@
 # Pure unit tests for lib.nix — no pkgs, no builders, no IO.
-# Run with:  nix eval --file tests/lib-tests.nix
-#
-# Each test is { name, got, expected }.
-# `failures` throws with a full report if any test fails.
+# Evaluated by nixx's own flake check; a failing assertion throws immediately.
 let
   lib = import ../lib.nix;
   inherit (builtins)
-    concatStringsSep filter length split isString isList isAttrs match
+    concatStringsSep filter length split isString isList isAttrs
     replaceStrings head;
 
   splitLines = s: filter isString (split "\n" s);
 
-  # Literal (non-regex) substring search via replaceStrings.
-  # Safe for patterns containing (, ), [, ], {, +, *, ?, etc.
-  # Replacing needle with "" shortens the string iff needle was present.
-  contains = needle: text:
-    replaceStrings [needle] [""] text != text;
+  # Literal (non-regex) substring check: safe for (, ), [, {, +, * etc.
+  contains = needle: text: replaceStrings [needle] [""] text != text;
 
-  # First non-empty line of a (possibly multi-line) string.
+  # First non-empty line of a multi-line string.
   firstLine = text: head (filter (l: l != "") (splitLines text));
 
   # ================================================================
@@ -554,15 +548,10 @@ let
 
   ];
 
-  # ---- runner ----
-  run = t:
-    if t.got == t.expected then null
-    else t // { result = "FAIL"; };
-
+  run = t: if t.got == t.expected then null else t;
   failures = filter (x: x != null) (map run tests);
   total = length tests;
   nfail = length failures;
-
   failReport = concatStringsSep "\n\n" (map (f:
     "FAIL  ${f.name}\n  got:      ${builtins.toJSON f.got}\n  expected: ${builtins.toJSON f.expected}"
   ) failures);
