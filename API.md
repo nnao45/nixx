@@ -40,32 +40,37 @@ Reads each block's `__lang` and dispatches to the matching builder; the result
 is an attrset of `/nix/store/.../bin/<name>` executables. Attr names become
 binary names, and bodies are source-read.
 
+Per-binary options are attached by **calling the block as a function**:
+`bash ''body'' { opts }` — no separate `app` wrapper:
+
 ```nix
 with inputs.nixx.for pkgs;
 mkApps { } {
-  deploy = app { runtimeInputs = [ pkgs.rsync ]; } (bash ''
+  deploy = bash ''
     echo "deploying from ${PWD}"
     rsync -a ./dist/ "$HOST:/srv/"
-  '');
+  '' { runtimeInputs = [ pkgs.rsync ]; };
 
-  report = app { deps = [ "rich>=13" ]; } (uv ''
+  report = uv ''
     from rich import print
     print("[bold green]done[/]")
-  '');
+  '' { deps = [ "rich>=13" ]; };
 
-  check = app { compile = true; } (bun ''
+  check = bun ''
     interface R { ok: boolean }
     const r: R = { ok: true };
     console.log(`status: ${r.ok}`);
-  '');
+  '' { compile = true; };
 }
 ```
 
 - `bun --compile` → a self-contained store binary.
-- `app { ... } block` attaches per-binary options such as `runtimeInputs`,
-  `projectRoot`, `deps`, or `compile`.
-- `mkApp` remains as a singleton helper; `runApplication` is a deprecated alias
-  kept for compatibility.
+- `bash ''...'' { opts }` — opts trail the body; Nix left-to-right application
+  means `bash ''body'' { opts }` = `(bash ''body'') { opts }`, calling the
+  block's `__functor`. The body thunk is **never forced** during this — only
+  `materializeRaw` reads it (from source), so `${HOME}` in the body is safe.
+- `app { ... } block` still works as a backwards-compatible composition helper.
+  `mkApp` remains as a singleton helper; `runApplication` is a deprecated alias.
 - low-level builders in `writers.nix`: `writeBashApplication`,
   `writeUvApplication`, `writeBunApplication`, `writeNodeApplication`,
   `writeTsxApplication`, `writeDenoApplication`.
@@ -79,10 +84,10 @@ there's a single source of truth and no drift:
 # preferred: deps come from the project's own manifest
 with inputs.nixx.for pkgs;
 mkApps { } {
-  report = app { projectRoot = ./.; } (uv ''
+  report = uv ''
     from rich import print          # rich resolved from ./pyproject.toml + uv.lock
     print("hello")
-  '');
+  '' { projectRoot = ./.; };
 }
 
 # the project dir is imported into the store; the launcher runs

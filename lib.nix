@@ -271,17 +271,36 @@ let
   # site: `nixx.bun ''...''`, `nixx.py ''...''`, etc.
   # keep rawBody so line-mapping can count blank lines dedent will drop,
   # and indent so col-mapping can re-add stripped leading columns.
+  #
+  # Per-app options can be attached by CALLING the block as a function:
+  #   deploy = bash ''rsync -a ./dist/ "$HOST:/srv/"'' { runtimeInputs = [ pkgs.rsync ]; };
+  #
+  # This works via `__functor`: bash ''body'' returns a block that is also
+  # callable, so `(bash ''body'') { opts }` (or without parens via Nix's
+  # left-to-right application: `bash ''body'' { opts }`) merges opts into
+  # __appOptions WITHOUT ever forcing the body string. That avoids the core
+  # hazard: builtins.isAttrs/builtins.typeOf are strict, and a body like
+  # ''echo ${HOME}'' under `with runtimeScope;` throws when forced by a type
+  # check — but the body thunk is kept lazy here and only overwritten by
+  # materializeRaw (source-read) before anyone accesses it.
   mkBlock = lang: body:
-    let d = dedentInfo body;
-    in {
-      __sh = true;
-      __lang = lang;
-      requirements = [ ];
-      env = { };
-      cwd = null;
-      description = null; # one-line summary shown by the runner's --list
-      inherit (d) text indent; rawBody = body;
-    };
+    let
+      d = dedentInfo body;
+      block = {
+        __sh = true;
+        __lang = lang;
+        requirements = [ ];
+        env = { };
+        cwd = null;
+        description = null; # one-line summary shown by the runner's --list
+        inherit (d) text indent; rawBody = body;
+        # calling the block as a function attaches per-app options:
+        #   bash ''curl ${URL}'' { runtimeInputs = [ pkgs.curl ]; }
+        __functor = _self: opts:
+          block // { __appOptions = (block.__appOptions or { }) // opts; };
+      };
+    in
+    block;
 
   sh = mkBlock "bash"; # bash (default)
   bash = mkBlock "bash"; # alias of sh, reads naturally next to node/perl/...
@@ -325,7 +344,7 @@ let
 
   app = opts: blk:
     assert (blk.__sh or false) || throw "nixx.app: second arg must be a nixx block (e.g. nixx.sh ''...'')";
-    blk // { __appOptions = opts; };
+    blk // { __appOptions = (blk.__appOptions or { }) // opts; };
 
   normalize = v:
     if isAttrs v && (v.__sh or false) then v

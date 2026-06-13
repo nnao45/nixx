@@ -72,12 +72,14 @@ rec {
   #
   #   mkApps { } {
   #     inspect = nixx.sh ''echo ${HOME}'';
-  #     report = nixx.app { deps = [ "rich" ]; } (nixx.uv ''...'');
+  #     report  = nixx.uv  ''from rich import print ...'' { deps = [ "rich" ]; };
+  #     fetch   = nixx.sh  ''curl ${URL}'' { runtimeInputs = [ pkgs.curl ]; };
   #   }
   #
-  # Global options in the first attrset apply to every app. Per-app options go
-  # through nixx.app. Options that a language builder doesn't accept are dropped
-  # first so it won't error.
+  # Per-app options are attached by calling the block: bash ''body'' { opts }.
+  # nixx.app { } (block) still works as a backwards-compatible helper.
+  # Global options in the first attrset apply to every app. Options that a
+  # language builder doesn't accept are dropped first so it won't error.
   mkApps = opts: apps:
     let
       common = [ "name" "vars" "runtimeInputs" ];
