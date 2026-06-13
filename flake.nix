@@ -10,6 +10,7 @@
     let
       lib = import ./lib.nix;
       writersFor = pkgs: import ./writers.nix { inherit pkgs; nixx = lib; };
+      forPkgs = pkgs: lib // (writersFor pkgs) // { inherit pkgs; };
     in
     {
       # System-independent outputs consumed by flake users:
@@ -18,8 +19,20 @@
       inherit lib;
       writers = writersFor;
 
+      # `for pkgs` — the batteries-included namespace: lib + pkgs-bound writers
+      # + `pkgs`, in ONE set meant to be brought in with `with`:
+      #
+      #   with inputs.nixx.for pkgs;
+      #   (mkTasks { } { dev = bash '' echo ${HOME} ''; }).devShell
+      #
+      # The single `with` does double duty: it un-prefixes the constructors AND
+      # defers Nix's static undefined-variable check (any `with` makes the scope
+      # dynamic), so a bare ${VAR} survives with no separate `runtimeScope`. The
+      # writers' `mkTasks` (derivation + devShell + .tasks) shadows lib's.
+      for = forPkgs;
+
       overlays.default = final: prev: {
-        nixx = { inherit lib; writers = writersFor final; };
+        nixx = { inherit lib; writers = writersFor final; for = forPkgs; };
       };
     }
     //
@@ -27,14 +40,14 @@
       let
         pkgs = import nixpkgs { inherit system; };
         nixx = lib;
-        inherit (writersFor pkgs) runApplication;
+        inherit (writersFor pkgs) mkApps;
 
         # Pure-Nix lib tests, evaluated at flake-eval time.
         # A failing assertion throws here and prevents the flake from building.
-        # The resulting script is shellcheck-gated via nixx's own runApplication.
+        # The resulting script is shellcheck-gated via nixx's own mkApps.
         libTests =
           let ok = import ./tests/lib-tests.nix;
-          in runApplication { name = "test"; } (nixx.sh "echo ${nixx.shq ok}\n");
+          in (mkApps { } { test = nixx.sh "echo ${nixx.shq ok}\n"; }).test;
 
         # ---- e2e stress tests (inline, shared logic with examples/shell-hell-e2e) ----
         mkE2e = name: runner:
@@ -99,20 +112,24 @@
             '');
           }).runner;
 
+        # Volatile state is normalized per task: the runner is ONE bash process
+        # (so env exports persist — see e2e-combo), but cwd and shell options are
+        # re-asserted at each task's entry, so a prior task's `cd` / `set +u`
+        # must NOT leak into a dependent task.
         e2eStrict = mkE2e "e2e-strict"
           (nixx.mkTasks { name = "e2e-strict"; } {
-            disable = nixx.sh ''set +euo pipefail'';
-            strict_on = nixx.task { strict = true; deps = [ "disable" ]; } (nixx.sh ''
-              case "$-" in *u*) ;; *) echo "FAIL: -u not set with strict=true"; exit 1 ;; esac
-              case "$-" in *e*) ;; *) echo "FAIL: -e not set with strict=true"; exit 1 ;; esac
-              echo "PASS: strict=true restores -euo pipefail"
+            loosen = nixx.sh ''set +u'';
+            reasserted = nixx.task { deps = [ "loosen" ]; } (nixx.sh ''
+              case "$-" in *u*) ;; *) echo "FAIL: -u leaked off from a prior task"; exit 1 ;; esac
+              case "$-" in *e*) ;; *) echo "FAIL: -e leaked off from a prior task"; exit 1 ;; esac
+              echo "PASS: shell options re-asserted per task (no leak)"
             '');
-            strict_off = nixx.sh ''
-              UNDEF=''${UNDEF:-ok}
-              test "$UNDEF" = "ok" || { echo "FAIL: unexpected UNDEF=$UNDEF"; exit 1; }
-              echo "PASS: strict=false allows undefined vars"
-            '';
-            all = nixx.task { deps = [ "strict_on" "strict_off" ]; } (nixx.sh ''
+            chdir = nixx.task { cwd = "/"; } (nixx.sh ''test "$PWD" = "/"'');
+            cwd_reset = nixx.task { deps = [ "chdir" ]; } (nixx.sh ''
+              test "$PWD" != "/" || { echo "FAIL: dep's cd / leaked into this task"; exit 1; }
+              echo "PASS: cwd reset to invocation dir (no leak)"
+            '');
+            all = nixx.task { deps = [ "reasserted" "cwd_reset" ]; } (nixx.sh ''
               echo "=== e2e-strict: ALL PASSED ==="
             '');
           }).runner;
@@ -259,7 +276,11 @@
                   for f in flake.nix lib.nix writers.nix tests/lib-tests.nix \
                            examples/simple01/flake.nix examples/shell-hell-e2e/flake.nix; do
                     diag=$(cat "$f" | nixf-tidy --variable-lookup \
-                      | jq 'map(select(.sname != "sema-primop-removed-prefix"))')
+                      | jq 'map(select(
+                          .sname != "sema-primop-removed-prefix"
+                          and .sname != "sema-extra-with"
+                          and .sname != "deprecated-url-literal"
+                        ))')
                     if [ "$diag" != "[]" ]; then
                       echo "$f:"
                       echo "$diag" | jq -r '.[] | "  \(.sname): \(.message) [Ln \(.range.lCur.line)]"'

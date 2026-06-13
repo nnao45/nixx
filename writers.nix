@@ -34,7 +34,7 @@ rec {
       name = opts.name or "tasks";
       result = nixx.mkTasks opts taskDefs;
       allRequirements = lib.concatMap
-        (t: t.requirements or [])
+        (t: t.requirements or [ ])
         (lib.attrValues result.tasks);
       runner = pkgs.writeShellApplication {
         inherit name;
@@ -59,43 +59,90 @@ rec {
         packages = [ runner ];
         shellHook = completionHook;
       };
-    in {
+    in
+    {
       inherit runner devShell extendShell;
-      tasks = result.tasks;
-      meta = result.meta;
+      inherit (result) tasks meta;
     };
 
-  # runApplication — ONE entry point. Reads the block's __lang and dispatches
-  # to the matching builder. This is the recommended API:
+  # mkApps — build shippable store binaries from a source-read attrset.
+  # Attr names become binary names, and each block's __lang dispatches to the
+  # matching low-level write*Application builder. Because bodies live as attr
+  # values, nixx can source-read them and preserve shell/JS `${...}`:
   #
-  #   runApplication { name = "x"; deps = [ "rich" ]; } (nixx.uv  ''...'')
-  #   runApplication { name = "y"; } (nixx.bun ''...'')
-  #   runApplication { name = "z"; runtimeInputs = [ pkgs.jq ]; } (nixx.sh ''...'')
+  #   mkApps { } {
+  #     inspect = nixx.sh ''echo ${HOME}'';
+  #     report = nixx.app { deps = [ "rich" ]; } (nixx.uv ''...'');
+  #   }
   #
-  # Per-language options (deps, compile, runtimeInputs, ...) live in the first
-  # attrset and are forwarded to the relevant builder; options that a given
-  # builder doesn't accept are dropped first so it won't error.
-  runApplication = opts: block:
+  # Global options in the first attrset apply to every app. Per-app options go
+  # through nixx.app. Options that a language builder doesn't accept are dropped
+  # first so it won't error.
+  mkApps = opts: apps:
     let
-      lang = block.__lang or "bash";
-      pick = names: lib.filterAttrs (n: _: lib.elem n names) opts;
       common = [ "name" "vars" "runtimeInputs" ];
+      pickFrom = src: names: lib.filterAttrs (n: _: lib.elem n names) src;
+      dispatch = appOpts: block:
+        let lang = block.__lang or "bash";
+        in
+        if lang == "bash" then
+          writeBashApplication ((pickFrom appOpts (common ++ [ "strict" ])) // { inherit block; })
+        else if lang == "python-uv" then
+          writeUvApplication ((pickFrom appOpts (common ++ [ "projectRoot" "frozen" "deps" "pythonReq" "lintIgnore" ])) // { inherit block; })
+        else if lang == "bun" then
+          writeBunApplication ((pickFrom appOpts (common ++ [ "projectRoot" "compile" ])) // { inherit block; })
+        else if lang == "node" then
+          writeNodeApplication ((pickFrom appOpts (common ++ [ "projectRoot" "nodeModules" "syntaxCheck" ])) // { inherit block; })
+        else if lang == "typescript" then
+          writeTsxApplication ((pickFrom appOpts (common ++ [ "nodeModules" ])) // { inherit block; })
+        else if lang == "deno" then
+          writeDenoApplication ((pickFrom appOpts common) // { inherit block; })
+        else
+          throw ("nixx.mkApps: no builder for lang '" + lang + "' "
+            + "(have: bash, python-uv, bun, node, typescript, deno)");
+      result = nixx.mkTasks { vars = opts.vars or { }; } apps;
+      globalOpts = lib.removeAttrs opts [ "name" "vars" ];
     in
-    if lang == "bash" then
-      writeBashApplication ((pick (common ++ [ "strict" ])) // { inherit block; })
-    else if lang == "python-uv" then
-      writeUvApplication ((pick (common ++ [ "projectRoot" "frozen" "deps" "pythonReq" "lintIgnore" ])) // { inherit block; })
-    else if lang == "bun" then
-      writeBunApplication ((pick (common ++ [ "projectRoot" "compile" ])) // { inherit block; })
-    else if lang == "node" then
-      writeNodeApplication ((pick (common ++ [ "projectRoot" "nodeModules" "syntaxCheck" ])) // { inherit block; })
-    else if lang == "typescript" then
-      writeTsxApplication ((pick (common ++ [ "nodeModules" ])) // { inherit block; })
-    else if lang == "deno" then
-      writeDenoApplication ((pick common) // { inherit block; })
+    lib.mapAttrs
+      (name: block:
+        let appOpts = globalOpts // (block.__appOptions or { }) // { inherit name; };
+        in dispatch appOpts block)
+      result.tasks;
+
+  # mkApp — singleton helper plus legacy direct-block compatibility.
+  #
+  # Preferred, source-read form:
+  #   (mkApp { } { inspect = nixx.sh ''echo ${HOME}''; })
+  #
+  # Legacy direct-block form is still accepted, but it is evaluated by Nix
+  # before nixx sees it, so shell/JS `${...}` needs normal Nix escaping there:
+  #   mkApp { name = "inspect"; } (nixx.sh ''echo ''${HOME}'')
+  mkApp = opts: value:
+    if value.__sh or false then
+      let
+        legacyName = opts.name or (throw "nixx.mkApp: direct-block form requires `name`");
+        apps = mkApps (lib.removeAttrs opts [ "name" ]) {
+          ${legacyName} = value;
+        };
+      in
+      apps.${legacyName}
     else
-      throw ("nixx.runApplication: no builder for lang '" + lang + "' "
-        + "(have: bash, python-uv, bun, node, typescript, deno)");
+      let
+        names = lib.attrNames value;
+        attrName =
+          if names == [ ] then
+            throw "nixx.mkApp: expected a singleton attrset, got an empty attrset"
+          else if lib.length names != 1 then
+            throw "nixx.mkApp: expected a singleton attrset; use mkApps for multiple binaries"
+          else
+            lib.head names;
+        apps = mkApps opts value;
+      in
+      apps.${attrName};
+
+  # runApplication — deprecated alias of mkApp (the "run" was a misnomer: it
+  # builds a runnable, it doesn't run anything). Kept for back-compat.
+  runApplication = mkApp;
 
   # writeUvApplication — Python via uv, built to /nix/store/<hash>/bin/<name>.
   #
