@@ -33,7 +33,7 @@
 #   };
 let
   inherit (builtins)
-    replaceStrings split filter isString isAttrs length elemAt concatStringsSep
+    replaceStrings split filter isString isAttrs tryEval length elemAt concatStringsSep
     stringLength substring match head tail foldl' genList attrNames toString readFile;
 
   splitLines = s: filter isString (split "\n" s);
@@ -277,7 +277,14 @@ let
   #   deploy = bash { runtimeInputs = [ pkgs.rsync ]; } ''rsync ...'';
   # When called with a plain string body the second form is used (old API).
   mkBlock = lang: optsOrBody:
-    if isAttrs optsOrBody then
+    # builtins.isAttrs is strict: it forces optsOrBody. A body string like
+    # ''echo ${HOME}'' under `with runtimeScope;` is a deferred thunk whose
+    # ${VAR} interpolations throw at runtime when forced. tryEval catches that
+    # runtime error so we can fall through to the plain-body path — the body
+    # remains a lazy thunk and is never forced (materializeRaw overwrites it
+    # with the source-read text before anyone touches it).
+    let tc = tryEval (isAttrs optsOrBody); in
+    if tc.success && tc.value then
       body:
         let d = dedentInfo body;
         in {
