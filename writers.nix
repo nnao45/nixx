@@ -13,17 +13,19 @@ let
 in
 rec {
   # mkTasks — pkgs-bound wrapper around nixx.mkTasks.  Returns a derivation for
-  # the runner plus two helpers for wiring it into a devShell, so users can write:
+  # the runner plus helpers for wiring it into a devShell, so users can write:
   #
   #   let tasks = (inputs.nixx.writers pkgs).mkTasks { name = "tasks"; } { ... };
   #   in {
-  #     packages.tasks   = tasks.runner;       # nix run .#tasks -- build
-  #     devShells.default = tasks.devShell;    # nix develop → `tasks` in PATH
+  #     packages.tasks    = tasks.runner;         # nix run .#tasks -- build
+  #     devShells.default = tasks.devShell;       # nix develop → `tasks` in PATH
   #   }
   #
-  # Or, to extend an existing shell with the runner:
+  # Or merge the runner into an existing shell (task names are tab-completed):
   #
-  #   devShells.default = tasks.extendShell myExistingShell;
+  #   devShells.default = tasks.withShell (pkgs.mkShell { packages = [ nodejs ]; });
+  #
+  # `extendShell` is an alias for `withShell` (kept for backward compatibility).
   #
   # `runner` is a pkgs.writeShellApplication derivation (shellcheck-gated).
   # All per-task `requirements` packages are passed as runtimeInputs so
@@ -41,15 +43,27 @@ rec {
         runtimeInputs = allRequirements;
         text = result.runner;
       };
+      taskNames = lib.concatStringsSep " " (map (m: m.name) result.meta);
+      completionHook = ''
+        if [[ -n "''${BASH_VERSION-}" ]]; then
+          _${name}_completions() {
+            COMPREPLY=($(compgen -W "${taskNames}" -- "''${COMP_WORDS[COMP_CWORD]}"))
+          }
+          complete -F _${name}_completions ${name}
+        fi
+      '';
       devShell = pkgs.mkShell {
         packages = [ runner ];
+        shellHook = completionHook;
       };
-      extendShell = shell: pkgs.mkShell {
+      withShell = shell: pkgs.mkShell {
         inputsFrom = [ shell ];
         packages = [ runner ];
+        shellHook = completionHook;
       };
+      extendShell = withShell;
     in {
-      inherit runner devShell extendShell;
+      inherit runner devShell withShell extendShell;
       tasks = result.tasks;
       meta = result.meta;
     };
