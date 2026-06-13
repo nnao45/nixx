@@ -89,6 +89,25 @@
             }
           '');
 
+          # typescript via bun — deps from project package.json + bun.lockb
+          validate-project = runApplication {
+            name = "validate-project";
+            projectRoot = ./examples/ts;
+            compile = true;
+          } (nixx.ts ''
+            import chalk from "chalk";
+            interface User { name: string; age: number; }
+            const users: User[] = [
+              { name: "naoya", age: 30 },
+              { name: "kid", age: 10 },
+            ];
+            for (const u of users) {
+              const ok = u.age >= 18;
+              const label = ok ? chalk.green("ok") : chalk.red("too young");
+              console.log(`''${u.name}: ''${label}`);
+            }
+          '');
+
           # node — deps supplied by Nix (here: none), node --check gate
           ping = runApplication {
             name = "ping";

@@ -220,7 +220,9 @@ rec {
           ${lib.optionalString useProject ''
             # bring the project's manifest + lock so bundling resolves deps
             cp ${storedProject}/package.json . 2>/dev/null || true
-            cp ${storedProject}/bun.lockb . 2>/dev/null || true
+            # bun.lock (text, v1.1+) or bun.lockb (binary, legacy)
+            cp ${storedProject}/bun.lock . 2>/dev/null || \
+              cp ${storedProject}/bun.lockb . 2>/dev/null || true
             bun install --frozen-lockfile 2>/dev/null || bun install
           ''}
           # compile to a standalone binary (deps baked in, reproducible)
