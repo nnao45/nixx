@@ -221,8 +221,8 @@ let
       got = (lib.lua "print('hi')\n").__lang;
       expected = "lua"; }
 
-    { name = "mkBlock: deps defaults to []";
-      got = (lib.sh "echo\n").deps;
+    { name = "mkBlock: requirements defaults to []";
+      got = (lib.sh "echo\n").requirements;
       expected = []; }
 
     { name = "mkBlock: env defaults to {}";

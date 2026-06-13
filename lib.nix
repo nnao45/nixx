@@ -255,7 +255,7 @@ let
       esac
     '';
 
-  mkTasks = { name ? "tasks", vars ? {} }: taskAttrs:
+  mkTasks = { name ? "tasks", vars ? {}, defaultDeps ? [] }: taskAttrs:
     let
       full = builtins.mapAttrs
         (_: v: let b = normalize v; in b // { text = substVars vars b.text; })
@@ -270,7 +270,7 @@ let
         in if pos == null then null else pos.file;
     in {
       tasks = full;
-      runner = mkRunnerText name [] full;
+      runner = mkRunnerText name defaultDeps full;
       meta = map (n:
         let
           srcLine = lineOf n;
