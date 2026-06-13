@@ -119,6 +119,34 @@
           # lib unit tests — nix run .#test
           test = libTests;
 
+          # Nix lint/format task runner (shellcheck-gated via writeShellApplication)
+          # nix run .#nix-tasks -- fmt        auto-format all .nix files
+          # nix run .#nix-tasks -- fmt-check  verify formatting (CI)
+          # nix run .#nix-tasks -- lint       statix static analysis
+          # nix run .#nix-tasks -- check      fmt-check + lint
+          nix-tasks =
+            let
+              runner = (nixx.mkTasks { name = "nix-tasks"; } {
+                fmt = nixx.sh ''
+                  nixpkgs-fmt flake.nix lib.nix writers.nix tests/lib-tests.nix
+                '';
+                fmt-check = nixx.sh ''
+                  nixpkgs-fmt --check flake.nix lib.nix writers.nix tests/lib-tests.nix
+                '';
+                lint = nixx.sh ''
+                  statix check .
+                '';
+                check = nixx.task { needs = [ "fmt-check" "lint" ]; } (nixx.sh ''
+                  echo "all nix checks passed"
+                '');
+              }).runner;
+            in
+            pkgs.writeShellApplication {
+              name = "nix-tasks";
+              runtimeInputs = [ pkgs.nixpkgs-fmt pkgs.statix ];
+              text = runner;
+            };
+
           default = packages.report;
         };
 
@@ -139,35 +167,16 @@
           ];
           shellHook = ''
             echo "nixx dev shell — uv $(uv --version 2>/dev/null), bun $(bun --version 2>/dev/null)"
-            echo "run tests:  nix run .#test"
-            echo "format:     nix fmt"
-            echo "lint (nix): statix check ."
+            echo "run tests:   nix run .#test"
+            echo "format:      nix fmt"
+            echo "lint/format: nix run .#nix-tasks -- check"
           '';
         };
 
-        # nix flake check — example apps + lib tests + Nix lint/format
+        # nix flake check — example apps + lib tests + nix-tasks (shellcheck-gated)
         checks = packages // {
           lib-tests = libTests;
-
-          # verify all .nix files in the repo are formatted
-          nix-fmt = pkgs.runCommand "check-nix-fmt"
-            { nativeBuildInputs = [ pkgs.nixpkgs-fmt ]; }
-            ''
-              nixpkgs-fmt --check \
-                ${./flake.nix} \
-                ${./lib.nix} \
-                ${./writers.nix} \
-                ${./tests/lib-tests.nix}
-              touch $out
-            '';
-
-          # static analysis of Nix expressions
-          statix = pkgs.runCommand "check-statix"
-            { nativeBuildInputs = [ pkgs.statix ]; }
-            ''
-              statix check ${./.}
-              touch $out
-            '';
+          nix-tasks = packages.nix-tasks;
         };
       });
 }
