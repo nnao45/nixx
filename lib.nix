@@ -1,19 +1,29 @@
-# nixx — write raw bash inside pure Nix (string-mode).
+# nixx — write raw bash (and node/ts/perl/...) inside pure Nix.
 #
-# Shell bodies live in Nix indented strings ('' ... '').  Everything is raw
-# bash EXCEPT one rule that Nix imposes and cannot be automated away (Nix
-# evaluates the string before nixx ever sees it):
+# Bodies live in Nix indented strings ('' ... ''). nixx reads each task/script
+# body from SOURCE rather than evaluating it (see scanOpen + materializeRaw
+# below), so a shell ${VAR}, a JS template `${x}`, a perl ${name} — anything in
+# the ${} family — survives VERBATIM with no '' prefix. The one rule Nix imposes
+# is a single line of ceremony at the call site:
 #
-#     bash ${VAR}   must be written   ''${VAR}     (prefix the $ with '')
-#     a literal ''  must be written   '''
+#     with nixx.runtimeScope;          # defers Nix's static undefined-var check;
+#                                    # the source-read body never forces it.
 #
-# A lone $VAR (no braces) is raw.  And unlike comment-mode, */ is totally
-# fine here:  for d in */ , sed 's*/*x*' , etc. all work.
+# Then ${VAR} is just shell. A literal ''${...} still works too (the escape is
+# replayed). To inject an actual Nix value, use the explicit markers @nix(x) /
+# @nix:q(x) / @sh:q(x) / @py:q(x) / @js:q(x) — native Nix ${...} interpolation
+# does NOT run in a source-read body (that's the whole point: ${} is the
+# language's, not Nix's).
 #
+# A body built programmatically (`bash someVar`, not a literal ''...'') has no
+# source to read, so it falls back to ordinary evaluation — there ${VAR} would
+# need the old ''${VAR} escape. The guard tells the two apart automatically.
+#
+#   with nixx.runtimeScope;
 #   tasks = nixx.mkTasks { vars = { inherit port; }; } {
-#     dev = nixx.task { env.NODE_ENV = "development"; cwd = "./frontend"; } (nixx.sh ''
+#     dev = nixx.task { env.NODE_ENV = "development"; cwd = "./frontend"; } (nixx.bash ''
 #       for d in */; do echo "$d"; done       # */ ok, $d raw
-#       echo "editor is ''${EDITOR:-vi}"        # ${} needs '' prefix
+#       echo "editor is ${EDITOR:-vi}"          # ${} needs NO '' prefix
 #       npm run dev -- --port @nix(port)        # explicit Nix value
 #       greet @nix:q(message)                   # shell-quoted Nix value
 #     '');
@@ -80,6 +90,109 @@ let
       firstBodyAbs = openAbs + 1;
     in
     firstBodyAbs + leadingBlanks rawBody;
+
+
+  # ------------------------------------------------------------------
+  # Reading a block body from SOURCE instead of evaluating it.
+  #
+  # Nix's hardest darkness: inside ''...'' (or "..."), ${VAR} is an
+  # antiquotation, so a bare ${VAR} is a syntax/scope error unless the name is
+  # bound in Nix. nixx defeats this by NEVER forcing the body: the thunk is left
+  # untouched, and the literal text is recovered from the source file (readFile +
+  # the attr's position from unsafeGetAttrPos). So a shell ${HOME}, a JS template
+  # `${x}`, a perl ${name} — all survive verbatim.
+  #
+  # The remaining wall is Nix's STATIC undefined-variable check, which fires on
+  # ${name} in a literal even when the string is never forced. That check is
+  # deferred to runtime (i.e. never, for an unforced body) once the literal is
+  # under `with runtimeScope;`. So the full incantation is:
+  #
+  #     with nixx.runtimeScope;
+  #     mkTasks { } { dev = bash '' echo ${HOME}; npm run dev ''; }
+  #
+  # The scanner below faithfully replays Nix's own indented-string escapes
+  # (''' -> '', ''$ -> $, ''\n -> newline, ''\\ -> \) so the source-read body is
+  # lexically an ordinary Nix string — just one that is never evaluated.
+
+  # ---- the source-read guard ----
+  # scanOpen finds where THIS attr's body '' opens, so a block built from a
+  # literal `bash ''...''` is read from source (shell ${VAR} survives verbatim),
+  # while a programmatic body (`bash someVar`, or a cross-file re-wrap inside a
+  # writer) is left for ordinary evaluation. The rule: the body is the first ''
+  # outside any `{ }` opts block, occurring BEFORE the `;` that terminates this
+  # binding (at brace+paren depth 0). Parens are transparent so the common
+  # `task { } (bash ''...'')` wrapper still source-reads. Returns the '' offset
+  # or null (no literal body → caller falls back to the evaluated .text).
+  skipStr = s: n: i: # i just past opening "; returns past closing "
+    if i >= n then i
+    else
+      let c = substring i 1 s; in
+      if c == "\\" then skipStr s n (i + 2)
+      else if c == "\"" then i + 1
+      else skipStr s n (i + 1);
+  skipLine = s: n: i: # skip a # comment to just past the newline
+    if i >= n then i
+    else if substring i 1 s == "\n" then i + 1
+    else skipLine s n (i + 1);
+  # bd = brace depth (opts), pd = paren/bracket depth. '' counts only at bd==0;
+  # the terminating ; counts only at bd==0 && pd==0.
+  scanOpen = s: start:
+    let
+      n = stringLength s;
+      go = i: bd: pd:
+        if i >= n then null
+        else
+          let c = substring i 1 s; c2 = if i + 1 < n then substring i 2 s else ""; in
+          if c == "\"" then go (skipStr s n (i + 1)) bd pd
+          else if c == "#" then go (skipLine s n (i + 1)) bd pd
+          else if c2 == "''" && bd == 0 then i           # this attr's body
+          else if c2 == "''" then go (i + 2) bd pd       # '' inside opts: skip, ignore
+          else if c == "{" then go (i + 1) (bd + 1) pd
+          else if c == "}" then go (i + 1) (bd - 1) pd
+          else if c == "(" || c == "[" then go (i + 1) bd (pd + 1)
+          else if c == ")" || c == "]" then go (i + 1) bd (pd - 1)
+          else if c == ";" && bd == 0 && pd == 0 then null   # binding ends, no body
+          else go (i + 1) bd pd;
+    in
+    go start 0 0;
+
+  # scan a ''...'' body starting just past the opening ''. Replays Nix escapes
+  # and stops at the closing ''. Returns the literal body text.
+  scanBody = src: i: acc:
+    let n = stringLength src; in
+    if i >= n then acc
+    else if i + 1 < n && substring i 2 src == "''" then
+      let after = substring (i + 2) 1 src; in      # char right after the two quotes
+      if after == "'" then scanBody src (i + 3) (acc + "''")              # '''  -> ''
+      else if after == "$" then scanBody src (i + 3) (acc + "$")          # ''$  -> $
+      else if after == "\\" then # ''\X -> escape
+        let
+          e = substring (i + 3) 1 src;
+          o =
+            if e == "n" then "\n"
+            else if e == "t" then "\t"
+            else if e == "r" then "\r"
+            else if e == "\\" then "\\"
+            else e;
+        in
+        scanBody src (i + 4) (acc + o)
+      else acc                                                            # bare '' -> close
+    else scanBody src (i + 1) (acc + substring i 1 src);
+
+  # given (file, line, col) from unsafeGetAttrPos, return the attr's raw body
+  # text — or null if this binding has no literal '' (a programmatic body or a
+  # cross-file re-wrap). Slice the source from the attr's line onward, start the
+  # guard at the attr's column (so multiple attrs on one line don't bleed), find
+  # this binding's opening '', scan to its close.
+  rawBodyFromSource = file: line: col:
+    let
+      src = readFile file;
+      lines = splitLines src;
+      from = genList (i: elemAt lines (line - 1 + i)) (length lines - line + 1);
+      suffix = concatStringsSep "\n" from;
+      open = scanOpen suffix (col - 1);
+    in
+    if open == null then null else scanBody suffix (open + 2) "";
 
 
   # ---- per-language safe quoting ----
@@ -171,14 +284,27 @@ let
     };
 
   sh = mkBlock "bash"; # bash (default)
+  bash = mkBlock "bash"; # alias of sh, reads naturally next to node/perl/...
   py = mkBlock "python"; # python (lint: ruff)
   uv = mkBlock "python-uv"; # python + uv inline deps
   bun = mkBlock "bun"; # typescript/js via bun
   ts = mkBlock "typescript"; # typescript via tsx
   node = mkBlock "node"; # node (deps via Nix-supplied node_modules)
   deno = mkBlock "deno"; # deno (npm:/jsr: inline deps)
+  perl = mkBlock "perl"; # perl ($VAR / ${VAR} survive source-read like bash)
   ruby = mkBlock "ruby";
   lua = mkBlock "lua";
+
+  # runtimeScope — the empty attrset that, via `with nixx.runtimeScope;`, lets a
+  # block body carry arbitrary ${VAR} with NO '' prefix, leaving each ${name} to
+  # be resolved at RUNTIME by the body's own interpreter (bash/node/perl/...)
+  # rather than by Nix. It is intentionally `{}`: `with` on an (even empty) scope
+  # defers Nix's static undefined-variable check to a runtime that never arrives,
+  # because mkTasks/mkScripts read the body from SOURCE (never forcing the
+  # thunk). The one irreducible line of ceremony for the ${VAR}-tax-free style:
+  #   with nixx.runtimeScope;
+  #   mkTasks { } { dev = bash '' echo ${HOME}; npm run dev ''; }
+  runtimeScope = { };
 
   task = opts: blk:
     assert (blk.__sh or false) || throw "nixx.task: second arg must be a nixx block (e.g. nixx.sh ''...'')";
@@ -197,6 +323,24 @@ let
   normalize = v:
     if isAttrs v && (v.__sh or false) then v
     else throw "nixx: value must be a nixx block (e.g. nixx.sh ''...'', nixx.bun ''...'')";
+
+  # materializeRaw — read a block's body from SOURCE at `pos` (unsafeGetAttrPos)
+  # instead of forcing the never-evaluated Nix string, so shell/JS ${VAR} in the
+  # body survives verbatim. The guard (scanOpen) decides per block: a literal
+  # `bash ''...''` is source-read; a programmatic body (`bash var`) or a
+  # cross-file re-wrap (a writer's `{ main = block; }`) has no literal '' for
+  # this binding, so `raw` is null and we keep the block for ordinary evaluation.
+  # The body is UNSUBSTITUTED — callers apply @nix()/@sh:q() vars themselves.
+  materializeRaw = pos: b:
+    let
+      raw =
+        if pos == null then null
+        else rawBodyFromSource pos.file pos.line (pos.column or 1);
+    in
+    if raw == null then b
+    else
+      let d = dedentInfo raw; in
+      b // { text = d.text; rawBody = raw; inherit (d) indent; };
 
   # ---- runner generation ----
   # defaultDeps: task names run before EVERY task (except the default-dep tasks
@@ -233,6 +377,7 @@ let
         else if lang == "bun" then via "bun run -"
         else if lang == "typescript" then via "tsx"
         else if lang == "deno" then via "deno run -A -"
+        else if lang == "perl" then via "perl"
         else if lang == "ruby" then via "ruby"
         else if lang == "lua" then via "lua -"
         else via "cat"; # unknown: just echo it (safe fallback)
@@ -275,11 +420,13 @@ let
       ungroupedNames = filter (n: groupOf n == null) names;
       hasAnyGroup = length ungroupedNames < length names;
       # unique groups in definition order
-      allGroups = foldl' (acc: n:
-        let g = groupOf n; in
-        if g == null || builtins.elem g acc then acc
-        else acc ++ [ g ]
-      ) [ ] names;
+      allGroups = foldl'
+        (acc: n:
+          let g = groupOf n; in
+          if g == null || builtins.elem g acc then acc
+          else acc ++ [ g ]
+        ) [ ]
+        names;
       namesInGroup = g: filter (n: groupOf n == g) names;
       maxLenOf = ns: foldl' (a: n: let l = stringLength n; in if l > a then l else a) 0 ns;
       padNameIn = ns: n:
@@ -291,8 +438,9 @@ let
         then "  printf '  %s\\n' " + shq n
         else "  printf '  %s   %s\\n' " + shq (padFn n) + " " + shq d;
       groupSection = g:
-        let gNames = namesInGroup g;
-            padFn = padNameIn gNames;
+        let
+          gNames = namesInGroup g;
+          padFn = padNameIn gNames;
         in
         "  printf '%s\\n' " + shq (g + ":") + "\n" +
         concatStringsSep "\n" (map (listLineFor padFn) gNames);
@@ -307,9 +455,10 @@ let
           "    echo \"available tasks:\"\n" +
           concatStringsSep "\n" (map (listLineFor (padNameIn names)) names)
         else
-          let sections =
-                (if ungroupedNames != [ ] then [ ungroupedSection ] else [ ])
-                ++ map groupSection allGroups;
+          let
+            sections =
+              (if ungroupedNames != [ ] then [ ungroupedSection ] else [ ])
+              ++ map groupSection allGroups;
           in
           concatStringsSep "\n  printf '\\n'\n" sections;
     in
@@ -333,7 +482,13 @@ let
   mkTasks = { name ? "tasks", vars ? { }, defaultDeps ? [ ], env ? { } }: taskAttrs:
     let
       full = builtins.mapAttrs
-        (_: v: let b = normalize v; in b // { text = substVars vars b.text; env = env // b.env; })
+        (n: v:
+          let
+            b = normalize v;
+            pos = builtins.unsafeGetAttrPos n taskAttrs;
+            m = materializeRaw pos b; # literal '' bodies: read from source here
+          in
+          m // { text = substVars vars m.text; env = env // b.env; })
         taskAttrs;
       # resolve the source line where each task's body starts, for shellcheck remap
       lineOf = n:
@@ -393,6 +548,7 @@ let
     bash = { shebang = "#!/usr/bin/env bash"; strict = true; pathStyle = "bash"; };
     python = { shebang = "#!/usr/bin/env python3"; strict = false; pathStyle = "py"; };
     python-uv = { shebang = "#!/usr/bin/env -S uv run --script"; strict = false; pathStyle = "uv"; };
+    perl = { shebang = "#!/usr/bin/env perl"; strict = false; pathStyle = "none"; };
     ruby = { shebang = "#!/usr/bin/env ruby"; strict = false; pathStyle = "none"; };
     lua = { shebang = "#!/usr/bin/env lua"; strict = false; pathStyle = "none"; };
     # node: deps come from a Nix-supplied node_modules via NODE_PATH (set by
@@ -442,6 +598,10 @@ let
       prof = langProfiles.${lang'} or langProfiles.bash;
       shebang' = if shebang != null then shebang else prof.shebang;
       strict' = if strict != null then strict else prof.strict;
+      # b.text is already source-read when this block came through
+      # mkTasks/mkScripts; a directly-built standalone block forces its
+      # evaluated body here (so a bare ${VAR} would need `with runtimeScope` and a
+      # source position — i.e. build it through mkScripts).
       text = substVars vars b.text;
       ls = splitLines text;
       hasShebang = ls != [ ] && match "#!.*" (head ls) != null;
@@ -467,7 +627,9 @@ let
   mkScripts = { lang ? "bash", vars ? { } }: scriptAttrs:
     let
       full = builtins.mapAttrs
-        (_: v: let b = normalize v; in b // { text = substVars vars b.text; })
+        (n: v:
+          let b = normalize v; pos = builtins.unsafeGetAttrPos n scriptAttrs; in
+          materializeRaw pos b)
         scriptAttrs;
       lineOf = n:
         let pos = builtins.unsafeGetAttrPos n scriptAttrs;
@@ -497,8 +659,8 @@ let
     in
     {
       scripts = builtins.mapAttrs
-        (n: _:
-          mkScript { inherit lang vars; } scriptAttrs.${n})
+        (n: v:
+          mkScript { inherit lang vars; } v)   # v = materialized block (source-read)
         full;
       meta = map
         (n: {
@@ -513,6 +675,7 @@ let
 
 in
 {
-  inherit sh py uv bun ts node deno ruby lua mkBlock
-    task mkTasks mkScript mkScripts shq dedent langProfiles;
+  inherit sh bash py uv bun ts node deno perl ruby lua mkBlock
+    task mkTasks mkScript mkScripts shq dedent langProfiles
+    runtimeScope;
 }

@@ -34,7 +34,7 @@ rec {
       name = opts.name or "tasks";
       result = nixx.mkTasks opts taskDefs;
       allRequirements = lib.concatMap
-        (t: t.requirements or [])
+        (t: t.requirements or [ ])
         (lib.attrValues result.tasks);
       runner = pkgs.writeShellApplication {
         inherit name;
@@ -59,7 +59,8 @@ rec {
         packages = [ runner ];
         shellHook = completionHook;
       };
-    in {
+    in
+    {
       inherit runner devShell extendShell;
       tasks = result.tasks;
       meta = result.meta;

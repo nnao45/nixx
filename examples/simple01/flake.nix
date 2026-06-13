@@ -69,10 +69,15 @@
         #   tasks report    → python health report
         #   tasks validate  → ts project validation
         #   tasks check     → report then validate (just-style deps)
-        mkT = writers.mkTasks { name = "tasks"; } {
-          status   = n.sh ''${status}/bin/status'';
-          report   = n.sh ''${report}/bin/report'';
-          validate = n.sh ''${validate}/bin/validate'';
+        # task bodies are read from SOURCE (so a shell ${VAR} would be raw), so
+        # to splice in a Nix derivation path use the explicit @nix() marker.
+        mkT = writers.mkTasks {
+          name = "tasks";
+          vars = { inherit status report validate; };
+        } {
+          status   = n.sh ''@nix(status)/bin/status'';
+          report   = n.sh ''@nix(report)/bin/report'';
+          validate = n.sh ''@nix(validate)/bin/validate'';
           check    = n.task { deps = [ "report" "validate" ]; } (n.sh ''
             echo "all checks passed"
           '');
