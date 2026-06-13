@@ -15,11 +15,11 @@
       # System-independent outputs consumed by flake users:
       #   inputs.nixx.lib.bun ''...''
       #   inputs.nixx.writers pkgs
-      lib = lib;
+      inherit lib;
       writers = writersFor;
 
       overlays.default = final: prev: {
-        nixx = { lib = lib; writers = writersFor final; };
+        nixx = { inherit lib; writers = writersFor final; };
       };
     }
     //

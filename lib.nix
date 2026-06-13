@@ -144,7 +144,7 @@ let
     let d = dedentInfo body;
     in { __sh = true; __lang = lang;
          deps = []; env = {}; cwd = null;
-         text = d.text; indent = d.indent; rawBody = body; };
+         inherit (d) text indent; rawBody = body; };
 
   sh   = mkBlock "bash";        # bash (default)
   py   = mkBlock "python";      # python (lint: ruff)
