@@ -166,6 +166,7 @@ let
       requirements = [ ];
       env = { };
       cwd = null;
+      description = null; # one-line summary shown by the runner's --list
       inherit (d) text indent; rawBody = body;
     };
 
@@ -189,6 +190,7 @@ let
       cwd = opts.cwd or null;
       strict = opts.strict or false; # prepend `set -euo pipefail` to this task
       deps = opts.deps or [ ]; # just-style: run these prerequisite tasks first
+      description = opts.description or blk.description or null; # shown by --list
     };
 
   normalize = v:
@@ -264,6 +266,17 @@ let
         + concatStringsSep "" (map (n: "    ${n}) task_${n} ;;\n") names)
         + "    *) echo \"unknown task: $1\" >&2; return 1 ;;\n  esac\n}\n";
       cases = concatStringsSep "\n" (map (n: "  ${n}) shift; task_${n} \"$@\" ;;") names);
+      # `--list` output: `just`-style, descriptions aligned in a second column.
+      descOf = n: full.${n}.description or null;
+      maxNameLen = foldl' (a: n: let l = stringLength n; in if l > a then l else a) 0 names;
+      padName = n: n + concatStringsSep "" (genList (_: " ") (maxNameLen - stringLength n));
+      listLine = n:
+        let d = descOf n;
+        in
+        if d == null || d == ""
+        then "  printf '  %s\\n' " + shq n
+        else "  printf '  %s   %s\\n' " + shq (padName n) + " " + shq d;
+      listBody = concatStringsSep "\n" (map listLine names);
     in
     ''
       #!/usr/bin/env bash
@@ -276,7 +289,9 @@ let
       case "''${1:-}" in
       ${cases}
         ""|-l|--list|help)
-          echo "available tasks:"; printf '  %s\n' ${concatStringsSep " " names} ;;
+          echo "available tasks:"
+      ${listBody}
+          ;;
         *) echo "unknown task: $1" >&2; exit 1 ;;
       esac
     '';
@@ -326,6 +341,7 @@ let
             file = srcFile;
             line = srcLine; # source line of body line 1
             indent = commonIndent; # columns Nix stripped (add back uniformly)
+            description = full.${n}.description or null;
           })
         (attrNames full);
     };
