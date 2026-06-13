@@ -72,12 +72,12 @@ rec {
   #
   #   mkApps { } {
   #     inspect = nixx.sh ''echo ${HOME}'';
-  #     report  = nixx.uv  { deps = [ "rich" ]; } ''from rich import print ...'';
-  #     fetch   = nixx.sh  { runtimeInputs = [ pkgs.curl ]; } ''curl ${URL}'';
+  #     report  = nixx.uv  ''from rich import print ...'' { deps = [ "rich" ]; };
+  #     fetch   = nixx.sh  ''curl ${URL}'' { runtimeInputs = [ pkgs.curl ]; };
   #   }
   #
-  # Per-app options are passed as a first attrset to the block constructor
-  # (preferred). nixx.app { } (block) still works as a composition helper.
+  # Per-app options are attached by calling the block: bash ''body'' { opts }.
+  # nixx.app { } (block) still works as a backwards-compatible helper.
   # Global options in the first attrset apply to every app. Options that a
   # language builder doesn't accept are dropped first so it won't error.
   mkApps = opts: apps:

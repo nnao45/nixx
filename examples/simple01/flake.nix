@@ -20,18 +20,18 @@
         apps = mkApps { } {
           # ── bash: show dev-environment tool versions ──────────────────────
           # nix run .#status
-          status = n.sh { runtimeInputs = [ pkgs.uv pkgs.bun pkgs.nodejs ]; } ''
+          status = n.sh ''
             echo "=== dev environment ==="
             printf "  home    %s\n" "${HOME}"
             printf "  python  %s\n" "$(python3 --version 2>/dev/null || echo n/a)"
             printf "  uv      %s\n" "$(uv --version      2>/dev/null || echo n/a)"
             printf "  bun     %s\n" "$(bun --version     2>/dev/null || echo n/a)"
             printf "  node    %s\n" "$(node --version    2>/dev/null || echo n/a)"
-          '';
+          '' { runtimeInputs = [ pkgs.uv pkgs.bun pkgs.nodejs ]; };
 
           # ── python/uv: project health report (deps from ./py) ─────────────
           # nix run .#report
-          report = n.uv { projectRoot = ./py; } ''
+          report = n.uv ''
             from rich import print
             from rich.table import Table
             t = Table(title="python project")
@@ -40,11 +40,11 @@
             t.add_row("deps",   "[green]ok[/]")
             t.add_row("python", "[green]ok[/]")
             print(t)
-          '';
+          '' { projectRoot = ./py; };
 
           # ── typescript/bun: project validation (deps from ./ts) ───────────
           # nix run .#validate
-          validate = n.bun { projectRoot = ./ts; compile = true; } ''
+          validate = n.bun ''
             import chalk from "chalk";
             const checks: [string, boolean][] = [
               ["python env",  true],
@@ -54,7 +54,7 @@
             for (const [label, ok] of checks) {
               console.log((ok ? chalk.green("✓") : chalk.red("✗")) + "  " + label);
             }
-          '';
+          '' { projectRoot = ./ts; compile = true; };
         };
         inherit (apps) status report validate;
 

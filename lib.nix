@@ -33,7 +33,7 @@
 #   };
 let
   inherit (builtins)
-    replaceStrings split filter isString isAttrs tryEval length elemAt concatStringsSep
+    replaceStrings split filter isString isAttrs length elemAt concatStringsSep
     stringLength substring match head tail foldl' genList attrNames toString readFile;
 
   splitLines = s: filter isString (split "\n" s);
@@ -272,42 +272,35 @@ let
   # keep rawBody so line-mapping can count blank lines dedent will drop,
   # and indent so col-mapping can re-add stripped leading columns.
   #
-  # Constructors accept an OPTIONAL first attrset of per-app options so you
-  # can attach mkApps options inline without a separate nixx.app wrapper:
-  #   deploy = bash { runtimeInputs = [ pkgs.rsync ]; } ''rsync ...'';
-  # When called with a plain string body the second form is used (old API).
-  mkBlock = lang: optsOrBody:
-    # builtins.isAttrs is strict: it forces optsOrBody. A body string like
-    # ''echo ${HOME}'' under `with runtimeScope;` is a deferred thunk whose
-    # ${VAR} interpolations throw at runtime when forced. tryEval catches that
-    # runtime error so we can fall through to the plain-body path — the body
-    # remains a lazy thunk and is never forced (materializeRaw overwrites it
-    # with the source-read text before anyone touches it).
-    let tc = tryEval (isAttrs optsOrBody); in
-    if tc.success && tc.value then
-      body:
-        let d = dedentInfo body;
-        in {
-          __sh = true;
-          __lang = lang;
-          requirements = [ ];
-          env = { };
-          cwd = null;
-          description = null;
-          inherit (d) text indent; rawBody = body;
-          __appOptions = optsOrBody;
-        }
-    else
-      let d = dedentInfo optsOrBody;
-      in {
+  # Per-app options can be attached by CALLING the block as a function:
+  #   deploy = bash ''rsync -a ./dist/ "$HOST:/srv/"'' { runtimeInputs = [ pkgs.rsync ]; };
+  #
+  # This works via `__functor`: bash ''body'' returns a block that is also
+  # callable, so `(bash ''body'') { opts }` (or without parens via Nix's
+  # left-to-right application: `bash ''body'' { opts }`) merges opts into
+  # __appOptions WITHOUT ever forcing the body string. That avoids the core
+  # hazard: builtins.isAttrs/builtins.typeOf are strict, and a body like
+  # ''echo ${HOME}'' under `with runtimeScope;` throws when forced by a type
+  # check — but the body thunk is kept lazy here and only overwritten by
+  # materializeRaw (source-read) before anyone accesses it.
+  mkBlock = lang: body:
+    let
+      d = dedentInfo body;
+      block = {
         __sh = true;
         __lang = lang;
         requirements = [ ];
         env = { };
         cwd = null;
-        description = null;
-        inherit (d) text indent; rawBody = optsOrBody;
+        description = null; # one-line summary shown by the runner's --list
+        inherit (d) text indent; rawBody = body;
+        # calling the block as a function attaches per-app options:
+        #   bash ''curl ${URL}'' { runtimeInputs = [ pkgs.curl ]; }
+        __functor = _self: opts:
+          block // { __appOptions = (block.__appOptions or { }) // opts; };
       };
+    in
+    block;
 
   sh = mkBlock "bash"; # bash (default)
   bash = mkBlock "bash"; # alias of sh, reads naturally next to node/perl/...
