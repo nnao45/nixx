@@ -191,6 +191,7 @@ let
       strict = opts.strict or false; # prepend `set -euo pipefail` to this task
       deps = opts.deps or [ ]; # just-style: run these prerequisite tasks first
       description = opts.description or blk.description or null; # shown by --list
+      group = opts.group or null; # group label for --list display
     };
 
   normalize = v:
@@ -267,16 +268,50 @@ let
         + "    *) echo \"unknown task: $1\" >&2; return 1 ;;\n  esac\n}\n";
       cases = concatStringsSep "\n" (map (n: "  ${n}) shift; task_${n} \"$@\" ;;") names);
       # `--list` output: `just`-style, descriptions aligned in a second column.
+      # When any task has a `group`, output uses group headers instead of the
+      # flat "available tasks:" header; tasks are padded per-group.
       descOf = n: full.${n}.description or null;
-      maxNameLen = foldl' (a: n: let l = stringLength n; in if l > a then l else a) 0 names;
-      padName = n: n + concatStringsSep "" (genList (_: " ") (maxNameLen - stringLength n));
-      listLine = n:
-        let d = descOf n;
-        in
+      groupOf = n: full.${n}.group or null;
+      ungroupedNames = filter (n: groupOf n == null) names;
+      hasAnyGroup = length ungroupedNames < length names;
+      # unique groups in definition order
+      allGroups = foldl' (acc: n:
+        let g = groupOf n; in
+        if g == null || builtins.elem g acc then acc
+        else acc ++ [ g ]
+      ) [ ] names;
+      namesInGroup = g: filter (n: groupOf n == g) names;
+      maxLenOf = ns: foldl' (a: n: let l = stringLength n; in if l > a then l else a) 0 ns;
+      padNameIn = ns: n:
+        let len = maxLenOf ns; in
+        n + concatStringsSep "" (genList (_: " ") (len - stringLength n));
+      listLineFor = padFn: n:
+        let d = descOf n; in
         if d == null || d == ""
         then "  printf '  %s\\n' " + shq n
-        else "  printf '  %s   %s\\n' " + shq (padName n) + " " + shq d;
-      listBody = concatStringsSep "\n" (map listLine names);
+        else "  printf '  %s   %s\\n' " + shq (padFn n) + " " + shq d;
+      groupSection = g:
+        let gNames = namesInGroup g;
+            padFn = padNameIn gNames;
+        in
+        "  printf '%s\\n' " + shq (g + ":") + "\n" +
+        concatStringsSep "\n" (map (listLineFor padFn) gNames);
+      ungroupedSection =
+        let padFn = padNameIn ungroupedNames; in
+        concatStringsSep "\n" (map (listLineFor padFn) ungroupedNames);
+      # flat mode: all tasks in order, global padding, preceded by a header.
+      # grouped mode: ungrouped tasks first (if any), then each group under its
+      # header, sections separated by a blank line.
+      listBody =
+        if !hasAnyGroup then
+          "    echo \"available tasks:\"\n" +
+          concatStringsSep "\n" (map (listLineFor (padNameIn names)) names)
+        else
+          let sections =
+                (if ungroupedNames != [ ] then [ ungroupedSection ] else [ ])
+                ++ map groupSection allGroups;
+          in
+          concatStringsSep "\n  printf '\\n'\n" sections;
     in
     ''
       #!/usr/bin/env bash
@@ -289,7 +324,6 @@ let
       case "''${1:-}" in
       ${cases}
         ""|-l|--list|help)
-          echo "available tasks:"
       ${listBody}
           ;;
         *) echo "unknown task: $1" >&2; exit 1 ;;
@@ -342,6 +376,7 @@ let
             line = srcLine; # source line of body line 1
             indent = commonIndent; # columns Nix stripped (add back uniformly)
             description = full.${n}.description or null;
+            group = full.${n}.group or null;
           })
         (attrNames full);
     };
