@@ -143,7 +143,7 @@ let
   mkBlock = lang: body:
     let d = dedentInfo body;
     in { __sh = true; __lang = lang;
-         deps = []; env = {}; cwd = null;
+         requirements = []; env = {}; cwd = null;
          inherit (d) text indent; rawBody = body; };
 
   sh   = mkBlock "bash";        # bash (default)
@@ -158,12 +158,14 @@ let
 
   task = opts: blk:
     assert (blk.__sh or false) || throw "nixx.task: second arg must be a nixx block (e.g. nixx.sh ''...'')";
+    assert (!(opts ? needs)) || throw
+      "nixx.task: `needs` was renamed to `deps` (prerequisite tasks). For PATH packages use `requirements`.";
     blk // {
-      deps = opts.deps or [];
+      requirements = opts.requirements or [];  # packages whose /bin join PATH
       env = opts.env or {};
       cwd = opts.cwd or null;
       strict = opts.strict or false;   # prepend `set -euo pipefail` to this task
-      needs = opts.needs or [];        # just-style: run these tasks first
+      deps = opts.deps or [];          # just-style: run these prerequisite tasks first
     };
 
   normalize = v:
@@ -171,7 +173,11 @@ let
     else throw "nixx: value must be a nixx block (e.g. nixx.sh ''...'', nixx.bun ''...'')";
 
   # ---- runner generation ----
-  mkRunnerText = name: full:
+  # defaultDeps: task names run before EVERY task (except the default-dep tasks
+  # themselves), e.g. a `setup` task that exports NIX_CONFIG. Because the runner
+  # is one bash process, an `export` in such a task persists into every later
+  # task body and any child interpreter it spawns.
+  mkRunnerText = name: defaultDeps: full:
     let
       names = attrNames full;
       indentBody = t: concatStringsSep "\n"
@@ -208,22 +214,25 @@ let
           t = full.${n};
           lang = t.__lang or "bash";
           isBash = lang == "bash" || lang == "sh";
-          pathLine = if t.deps == [] then "" else
-            "  export PATH=" + shq (concatStringsSep ":" (map (d: "${toString d}/bin") t.deps)) + ":\"$PATH\"\n";
+          reqs = t.requirements or [];
+          pathLine = if reqs == [] then "" else
+            "  export PATH=" + shq (concatStringsSep ":" (map (d: "${toString d}/bin") reqs)) + ":\"$PATH\"\n";
           envLines = concatStringsSep ""
             (map (k: "  export ${k}=" + shq t.env.${k} + "\n") (attrNames t.env));
           cwdLine = if t.cwd == null then "" else "  cd -- " + shq t.cwd + "\n";
           # strict only meaningful for bash bodies
           strictLine = if (t.strict or false) && isBash then "  set -euo pipefail\n" else "";
           # just-style deps: run each prerequisite task (once) before this body.
-          needs = t.needs or [];
-          needsLines = concatStringsSep ""
-            (map (dep: "  _nixx_run " + dep + "\n") needs);
+          # defaultDeps run first for every task, except the default-dep tasks
+          # themselves (so they don't depend on each other / loop).
+          deps = (if builtins.elem n defaultDeps then [] else defaultDeps) ++ (t.deps or []);
+          depsLines = concatStringsSep ""
+            (map (dep: "  _nixx_run " + dep + "\n") deps);
           # run-once guard: a task body executes at most once per invocation.
           guard = "  case \" $_NIXX_DONE \" in *\" ${n} \"*) return 0 ;; esac\n"
                 + "  _NIXX_DONE=\"$_NIXX_DONE ${n}\"\n";
           bodyRun = langRunner lang (stripShebang t.text);
-        in "task_${n}() {\n" + guard + needsLines + strictLine + pathLine + envLines + cwdLine
+        in "task_${n}() {\n" + guard + depsLines + strictLine + pathLine + envLines + cwdLine
            + bodyRun + "}\n";
       # dispatcher used by needs: maps a task name to its function.
       dispatch = "_nixx_run() {\n  case \"$1\" in\n"
@@ -261,7 +270,7 @@ let
         in if pos == null then null else pos.file;
     in {
       tasks = full;
-      runner = mkRunnerText name full;
+      runner = mkRunnerText name [] full;
       meta = map (n:
         let
           srcLine = lineOf n;

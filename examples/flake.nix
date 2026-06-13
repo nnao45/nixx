@@ -40,7 +40,8 @@
             from rich import print
             from rich.table import Table
             t = Table(title="python project")
-            t.add_column("check"); t.add_column("result")
+            t.add_column("check")
+            t.add_column("result")
             t.add_row("deps",   "[green]ok[/]")
             t.add_row("python", "[green]ok[/]")
             print(t)
@@ -77,7 +78,7 @@
                 status   = n.sh ''${status}/bin/status'';
                 report   = n.sh ''${report}/bin/report'';
                 validate = n.sh ''${validate}/bin/validate'';
-                check    = n.task { needs = [ "report" "validate" ]; } (n.sh ''
+                check    = n.task { deps = [ "report" "validate" ]; } (n.sh ''
                   echo "all checks passed"
                 '');
               }).runner;
