@@ -128,7 +128,12 @@ rec {
         {
           lang = "python-uv";
           deps = if useProject then [ ] else deps;
-          inherit pythonReq vars;
+          # pythonReq drives the PEP 723 header; suppress it in project mode
+          # because pyproject.toml owns the requirement, and uv >=0.6 treats
+          # any file with a "# /// script" block as a standalone PEP 723
+          # script (requiring its own .lock), breaking --frozen --project.
+          pythonReq = if useProject then null else pythonReq;
+          inherit vars;
           # in project mode we run via `uv run`, so a uv shebang is redundant;
           # keep a plain python marker the wrapper strips.
           shebang = if useProject then "# (project script)" else null;

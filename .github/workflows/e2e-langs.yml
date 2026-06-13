@@ -1,0 +1,46 @@
+name: e2e-langs
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  e2e:
+    name: "e2e · ${{ matrix.lang }}"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lang: sh
+            expected: "hello from bash"
+          - lang: py
+            expected: "hello from python-uv"
+          - lang: bun
+            expected: "hello from bun"
+          - lang: node
+            expected: "hello from node"
+          - lang: ts
+            expected: "hello from tsx"
+          - lang: deno
+            expected: "hello from deno"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: DeterminateSystems/nix-installer-action@v14
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+
+      - name: build e2e-${{ matrix.lang }}
+        run: nix build .#e2e-${{ matrix.lang }}
+
+      - name: run e2e-${{ matrix.lang }} and verify output
+        run: |
+          out=$(nix run .#e2e-${{ matrix.lang }})
+          echo "output: $out"
+          echo "$out" | grep -qF "${{ matrix.expected }}" \
+            || { echo "FAIL: expected '${{ matrix.expected }}', got '$out'"; exit 1; }
+          echo "PASS: ${{ matrix.lang }}"

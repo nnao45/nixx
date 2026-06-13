@@ -226,6 +226,28 @@
             '');
           }).runner;
 
+        # ---- per-language e2e: one hello-world program per supported builder ----
+        e2eLangSh = runApplication { name = "e2e-sh"; }
+          (nixx.sh ''echo "hello from bash"'');
+
+        e2eLangPy = runApplication { name = "e2e-py"; projectRoot = ./tests/e2e-py; }
+          (nixx.uv ''print("hello from python-uv")'');
+
+        e2eLangBun = runApplication { name = "e2e-bun"; compile = true; }
+          (nixx.bun ''console.log("hello from bun")'');
+
+        e2eLangNode = runApplication { name = "e2e-node"; }
+          (nixx.node ''console.log("hello from node")'');
+
+        e2eLangTs = runApplication { name = "e2e-ts"; }
+          (nixx.ts ''
+            const msg: string = "hello from tsx";
+            console.log(msg);
+          '');
+
+        e2eLangDeno = runApplication { name = "e2e-deno"; }
+          (nixx.deno ''console.log("hello from deno")'');
+
       in
       rec {
         # ---- example applications, one per language ----
@@ -278,6 +300,14 @@
               runtimeInputs = [ pkgs.nixpkgs-fmt pkgs.statix pkgs.nixf pkgs.jq ];
               text = runner;
             };
+
+          # per-language hello-world — nix run .#e2e-<lang>
+          e2e-sh = e2eLangSh;
+          e2e-py = e2eLangPy;
+          e2e-bun = e2eLangBun;
+          e2e-node = e2eLangNode;
+          e2e-ts = e2eLangTs;
+          e2e-deno = e2eLangDeno;
 
           default = packages.test;
         };
