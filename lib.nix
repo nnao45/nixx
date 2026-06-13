@@ -271,17 +271,36 @@ let
   # site: `nixx.bun ''...''`, `nixx.py ''...''`, etc.
   # keep rawBody so line-mapping can count blank lines dedent will drop,
   # and indent so col-mapping can re-add stripped leading columns.
-  mkBlock = lang: body:
-    let d = dedentInfo body;
-    in {
-      __sh = true;
-      __lang = lang;
-      requirements = [ ];
-      env = { };
-      cwd = null;
-      description = null; # one-line summary shown by the runner's --list
-      inherit (d) text indent; rawBody = body;
-    };
+  #
+  # Constructors accept an OPTIONAL first attrset of per-app options so you
+  # can attach mkApps options inline without a separate nixx.app wrapper:
+  #   deploy = bash { runtimeInputs = [ pkgs.rsync ]; } ''rsync ...'';
+  # When called with a plain string body the second form is used (old API).
+  mkBlock = lang: optsOrBody:
+    if isAttrs optsOrBody then
+      body:
+        let d = dedentInfo body;
+        in {
+          __sh = true;
+          __lang = lang;
+          requirements = [ ];
+          env = { };
+          cwd = null;
+          description = null;
+          inherit (d) text indent; rawBody = body;
+          __appOptions = optsOrBody;
+        }
+    else
+      let d = dedentInfo optsOrBody;
+      in {
+        __sh = true;
+        __lang = lang;
+        requirements = [ ];
+        env = { };
+        cwd = null;
+        description = null;
+        inherit (d) text indent; rawBody = optsOrBody;
+      };
 
   sh = mkBlock "bash"; # bash (default)
   bash = mkBlock "bash"; # alias of sh, reads naturally next to node/perl/...
@@ -325,7 +344,7 @@ let
 
   app = opts: blk:
     assert (blk.__sh or false) || throw "nixx.app: second arg must be a nixx block (e.g. nixx.sh ''...'')";
-    blk // { __appOptions = opts; };
+    blk // { __appOptions = (blk.__appOptions or { }) // opts; };
 
   normalize = v:
     if isAttrs v && (v.__sh or false) then v

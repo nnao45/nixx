@@ -7,10 +7,10 @@ read from source, never escaped. No preprocessor, no codegen; files stay valid
 ```nix
 {
   packages = with nixx.for pkgs; mkApps { } {
-    deploy = app { runtimeInputs = [ pkgs.rsync ]; } (bash ''
+    deploy = bash { runtimeInputs = [ pkgs.rsync ]; } ''
       echo ${HOME}                     # no ''${ } — read from source, not evaluated
       rsync -a ./dist/ "$HOST:/srv/"
-    '');
+    '';
     ci = node ''
       console.log(`building for ${process.env.NODE_ENV}`);
     '';
@@ -75,10 +75,10 @@ with nixx.for pkgs;
 let
   apps = mkApps { } {
     status = bash ''echo "${USER} in ${PWD}"'';
-    report = app { deps = [ "rich" ]; } (uv ''
+    report = uv { deps = [ "rich" ]; } ''
       from rich import print
       print("[green]ok[/]")
-    '');
+    '';
   };
   tasks = mkTasks { name = "tasks"; vars = apps; } {
     check = bash ''
@@ -115,7 +115,7 @@ in {
 ```nix
 with nixx.for pkgs;
 let
-  apps = mkApps { } { envcheck = app { runtimeInputs = [ pkgs.jq ]; } (bash ''jq --version''); };
+  apps = mkApps { } { envcheck = bash { runtimeInputs = [ pkgs.jq ]; } ''jq --version''; };
   tasks = mkTasks { name = "tasks"; } { build = bash ''echo ${OUT_DIR:-dist}''; };
 in {
   packages = apps // { default = tasks.runner; };

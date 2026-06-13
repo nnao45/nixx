@@ -40,32 +40,35 @@ Reads each block's `__lang` and dispatches to the matching builder; the result
 is an attrset of `/nix/store/.../bin/<name>` executables. Attr names become
 binary names, and bodies are source-read.
 
+Per-binary options are passed as an optional first attrset directly to the
+block constructor — no separate wrapper needed:
+
 ```nix
 with inputs.nixx.for pkgs;
 mkApps { } {
-  deploy = app { runtimeInputs = [ pkgs.rsync ]; } (bash ''
+  deploy = bash { runtimeInputs = [ pkgs.rsync ]; } ''
     echo "deploying from ${PWD}"
     rsync -a ./dist/ "$HOST:/srv/"
-  '');
+  '';
 
-  report = app { deps = [ "rich>=13" ]; } (uv ''
+  report = uv { deps = [ "rich>=13" ]; } ''
     from rich import print
     print("[bold green]done[/]")
-  '');
+  '';
 
-  check = app { compile = true; } (bun ''
+  check = bun { compile = true; } ''
     interface R { ok: boolean }
     const r: R = { ok: true };
     console.log(`status: ${r.ok}`);
-  '');
+  '';
 }
 ```
 
 - `bun --compile` → a self-contained store binary.
-- `app { ... } block` attaches per-binary options such as `runtimeInputs`,
-  `projectRoot`, `deps`, or `compile`.
-- `mkApp` remains as a singleton helper; `runApplication` is a deprecated alias
-  kept for compatibility.
+- `bash { runtimeInputs = [...]; } ''...''` — inline opts on any constructor.
+- `app { ... } block` still works as a composition helper and for backwards
+  compatibility. `mkApp` remains as a singleton helper; `runApplication` is a
+  deprecated alias kept for compatibility.
 - low-level builders in `writers.nix`: `writeBashApplication`,
   `writeUvApplication`, `writeBunApplication`, `writeNodeApplication`,
   `writeTsxApplication`, `writeDenoApplication`.
@@ -79,10 +82,10 @@ there's a single source of truth and no drift:
 # preferred: deps come from the project's own manifest
 with inputs.nixx.for pkgs;
 mkApps { } {
-  report = app { projectRoot = ./.; } (uv ''
+  report = uv { projectRoot = ./.; } ''
     from rich import print          # rich resolved from ./pyproject.toml + uv.lock
     print("hello")
-  '');
+  '';
 }
 
 # the project dir is imported into the store; the launcher runs
