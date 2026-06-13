@@ -112,9 +112,9 @@ let
   };
 in {
   packages.tasks    = tasks.runner;        # nix run .#tasks -- build
-  devShells.default = tasks.devShell;      # nix develop → `tasks build`
-  # or extend an existing shell:
-  # devShells.default = tasks.extendShell myExistingShell;
+  devShells.default = tasks.devShell;      # nix develop → `tasks build` (tab-completed)
+  # or merge the runner into an existing shell:
+  # devShells.default = tasks.extendShell (pkgs.mkShell { packages = [ pkgs.nodejs ]; });
 }
 ```
 
@@ -136,9 +136,10 @@ $ tasks build
 `writers.mkTasks` returns:
 - **`runner`** — a `pkgs.writeShellApplication` derivation (shellcheck-gated).
   All per-task `requirements` packages are passed as `runtimeInputs`.
-- **`devShell`** — a `pkgs.mkShell` with `runner` in `packages`.
+- **`devShell`** — `pkgs.mkShell { packages = [runner]; }` with a `shellHook` that
+  registers bash tab-completion for all task names.
 - **`extendShell`** — `shell: pkgs.mkShell { inputsFrom = [shell]; packages = [runner]; }`.
-  Merges the runner into an existing shell.
+  Merges the runner (and its completion hook) into an existing shell.
 - **`tasks`** / **`meta`** — same as the pure `nixx.mkTasks` result (see below).
 
 The pure `nixx.mkTasks` (no pkgs) is still available if you only need the
