@@ -71,32 +71,40 @@ and a literal `''` must be written `'''`. Python/Ruby/Lua and TS *type syntax*
 never hit this; only `${}` interpolation does. (Even this README's flake hits
 it — that's the problem nixx exists to tame.)
 
-## Defeating the `${VAR}` tax: `with runtimeScope`
+## Defeating the `${VAR}` tax: one `with`
 Every task/script body passed to `mkTasks`/`mkScripts` is read **from source**
 instead of evaluated, so a `${VAR}` in the `${}` family — shell `${HOME}`, a JS
 template `` `${x}` ``, a perl `${name}` — survives verbatim with **no `''`
-prefix**. The only ceremony is one `with` at the call site:
+prefix**. The whole wiring is one `with`:
 
 ```nix
-with nixx.runtimeScope;
-tasks = nixx.mkTasks { } {
-  dev  = nixx.bash ''
+with nixx.for pkgs;                     # lib + writers + pkgs, all un-prefixed
+(mkTasks { } {
+  dev  = bash ''
     echo ${HOME}                       # no ''${ } — read from source, not evaluated
     npm run dev -- --port ${PORT}
   '';
-  ci   = nixx.node ''
+  ci   = node ''
     console.log(`building for ${process.env.NODE_ENV}`);
   '';
-};
+}).devShell
 ```
 
+`nixx.for pkgs` is `lib // (writers pkgs) // { inherit pkgs; }`. That one `with`
+does double duty: it un-prefixes the API (`bash`, `node`, `mkTasks`, `task`,
+`runApplication`, `pkgs`, …) **and** defers Nix's static undefined-variable check
+(any `with` makes the scope dynamic), so a bare `${VAR}` needs nothing else. If
+you'd rather not pull the whole namespace in, the building block is exported on
+its own as **`nixx.runtimeScope`** (an empty set): `with nixx.runtimeScope;` gives
+just the `${VAR}` deferral, and you keep writing `nixx.bash`/`nixx.mkTasks`.
+
 **How it works.** A block's body is a lazy thunk; `mkTasks`/`mkScripts` recover
-the literal text with `unsafeGetAttrPos` + `readFile` and never force it. `with
-runtimeScope;` (an empty set) defers Nix's static undefined-variable check to a
-runtime that never arrives — so unbound names like `${HOME}` are never looked
-up. To splice in an actual **Nix** value, use the explicit `@nix(x)` / `@sh:q(x)`
-markers (native Nix `${...}` interpolation does not run in a source-read body —
-that's the whole point: `${}` belongs to the language, not to Nix).
+the literal text with `unsafeGetAttrPos` + `readFile` and never force it. The
+`with` defers Nix's static undefined-variable check to a runtime that never
+arrives — so unbound names like `${HOME}` are never looked up. To splice in an
+actual **Nix** value, use the explicit `@nix(x)` / `@sh:q(x)` markers (native Nix
+`${...}` interpolation does not run in a source-read body — that's the whole
+point: `${}` belongs to the language, not to Nix).
 
 **The guard.** Only a *literal* `''...''` is read from source. A programmatic
 body (`nixx.bash someVar`) or a cross-file re-wrap (inside a writer) has no
@@ -118,16 +126,19 @@ on *everything*):
 before any source read can help. Write them as `''${...}`; the scanner replays
 the `''$` back to a literal `$`, emitting the intended text.)
 
-**Trade-off.** `with runtimeScope;` defers undefined-variable checking, so a typo
-in *never-evaluated* code under its scope won't be caught statically. Scope it
-tightly — just around the `mkTasks`/`mkScripts` call — and evaluated code still
-errors clearly at runtime.
+**Trade-off.** Any `with` (so `nixx.for pkgs` and `runtimeScope` alike) defers
+undefined-variable checking, so a typo in *never-evaluated* code under its scope
+won't be caught statically. Scope it to the flake output that builds your tasks —
+evaluated code still errors clearly at runtime.
 
 ## API
+- **`nixx.for pkgs`** — batteries-included namespace (`lib // writers pkgs //
+  { inherit pkgs; }`) for `with nixx.for pkgs;`. One `with` un-prefixes the API
+  and defers `${VAR}` (see above). `nixx.runtimeScope` is the deferral piece on
+  its own.
 - **constructors**: `nixx.sh`/`nixx.bash` `nixx.py` `nixx.uv` `nixx.bun`
   `nixx.ts` `nixx.node` `nixx.deno` `nixx.perl` `nixx.ruby` `nixx.lua` — each
-  `''...''` → tagged block. Pair with **`with nixx.runtimeScope;`** for zero-prefix
-  `${VAR}` (see above)
+  `''...''` → tagged block.
 - **`nixx.runApplication { name, ... } block`** — THE entry point; builds a
   store-path executable, dispatching on the block's language
 - `nixx.mkScript { lang?, vars?, deps?, ... } block` — just the script string
@@ -254,7 +265,7 @@ nix run .#validate    # ts     (bun --compile, deps from ./ts)
 nix run .#tasks -- check   # mkTasks runner: report + validate (just-style deps)
 ```
 
-**Pick your shell — same `tasks`, same zero-`${}`-tax bodies, three idioms:**
+**Pick your shell — same `with nixx.for pkgs;`, same zero-`${}`-tax bodies, three idioms:**
 
 | example | for the person who… | wiring |
 |---|---|---|

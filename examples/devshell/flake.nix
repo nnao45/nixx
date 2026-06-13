@@ -2,13 +2,13 @@
   description = "nixx × a plain flake devShell — zero-config `tasks` in `nix develop`";
 
   # ── For the plain-flake person ─────────────────────────────────────────────
-  # You already have `devShells.default`. You don't want devenv, you don't want
-  # to hand-roll a mkShell. You just want a `just`-style task command in the
-  # shell, and you want to write the task bodies as RAW shell/JS — no ''${ } tax.
+  # You already have `devShells.default`. You just want a `just`-style task
+  # command in the shell, with task bodies written as RAW shell/JS — no ''${ }.
   #
-  # nixx gives you exactly that: author bodies under `with n.runtimeScope;`
-  # (so ${VAR} is the language's, read from source — no '' prefix), then drop the
-  # ready-made `tasks.devShell` in as your devShell. That's the whole wiring.
+  # The whole wiring is ONE line: `with nixx.for pkgs;`. That single `with`
+  #   • un-prefixes the API (bash / node / perl / mkTasks / task / pkgs), and
+  #   • defers Nix's undefined-variable check, so a bare ${VAR} in a body is the
+  #     language's, resolved at runtime — no separate `runtimeScope`, no '' tax.
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -18,28 +18,23 @@
 
   outputs = { nixpkgs, flake-utils, nixx, ... }:
     flake-utils.lib.eachDefaultSystem (system:
+      with nixx.for nixpkgs.legacyPackages.${system};
       let
-        pkgs = import nixpkgs { inherit system; };
-        n = nixx.lib;
-        writers = nixx.writers pkgs;
-
-        # The one line of ceremony. Under it, every ${VAR} in a body below is
-        # left for the body's own interpreter at runtime — never resolved by Nix.
-        tasks = with n.runtimeScope; writers.mkTasks { name = "tasks"; } {
+        tasks = mkTasks { name = "tasks"; } {
           # bash — ${HOME} / ${PWD} are RAW, no '' prefix.
-          info = n.task { description = "Show where we are"; } (n.bash ''
+          info = task { description = "Show where we are"; } (bash ''
             echo "user=${USER}  home=${HOME}"
             echo "cwd=${PWD}  editor=${EDITOR:-vi}"
           '');
 
           # node — a JS template literal `${PORT}` survives verbatim too.
-          serve = n.task { description = "Print the dev URL"; requirements = [ pkgs.nodejs ]; } (n.node ''
+          serve = task { description = "Print the dev URL"; requirements = [ pkgs.nodejs ]; } (node ''
             const PORT = process.env.PORT || 3000;
             console.log(`serving on http://localhost:${PORT}`);
           '');
 
           # perl — same trick: ${name} is perl's, not Nix's.
-          hello = n.task { description = "A perl hello"; requirements = [ pkgs.perl ]; } (n.perl ''
+          hello = task { description = "A perl hello"; requirements = [ pkgs.perl ]; } (perl ''
             my $name = $ENV{USER} || "stranger";
             print "perl waves at ${name}\n";
           '');

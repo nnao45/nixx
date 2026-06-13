@@ -10,6 +10,7 @@
     let
       lib = import ./lib.nix;
       writersFor = pkgs: import ./writers.nix { inherit pkgs; nixx = lib; };
+      forPkgs = pkgs: lib // (writersFor pkgs) // { inherit pkgs; };
     in
     {
       # System-independent outputs consumed by flake users:
@@ -18,8 +19,20 @@
       inherit lib;
       writers = writersFor;
 
+      # `for pkgs` — the batteries-included namespace: lib + pkgs-bound writers
+      # + `pkgs`, in ONE set meant to be brought in with `with`:
+      #
+      #   with inputs.nixx.for pkgs;
+      #   (mkTasks { } { dev = bash '' echo ${HOME} ''; }).devShell
+      #
+      # The single `with` does double duty: it un-prefixes the constructors AND
+      # defers Nix's static undefined-variable check (any `with` makes the scope
+      # dynamic), so a bare ${VAR} survives with no separate `runtimeScope`. The
+      # writers' `mkTasks` (derivation + devShell + .tasks) shadows lib's.
+      for = forPkgs;
+
       overlays.default = final: prev: {
-        nixx = { inherit lib; writers = writersFor final; };
+        nixx = { inherit lib; writers = writersFor final; for = forPkgs; };
       };
     }
     //

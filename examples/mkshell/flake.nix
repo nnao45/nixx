@@ -3,12 +3,11 @@
 
   # ── For the mkShell person ─────────────────────────────────────────────────
   # You like `pkgs.mkShell { packages; shellHook; }` and you want to keep it.
-  # Two shell pains nixx removes WITHOUT taking over your shell:
-  #   1. the `tasks` runner — merge it in with `tasks.extendShell yourShell`
-  #      (inputsFrom = [yourShell]; packages += [runner]; + tab-completion).
-  #   2. the shellHook itself is a Nix string, so a literal ${VAR} there needs
-  #      the ''${ } tax. Author it as a nixx body instead and read out `.text`,
-  #      which is taken from SOURCE — so ${VAR} stays raw.
+  # `with nixx.for pkgs;` gives you the raw-shell API in one line; then:
+  #   • merge the `tasks` runner in with `tasks.extendShell yourShell`
+  #     (inputsFrom = [yourShell]; packages += [runner]; + tab-completion), and
+  #   • author the shellHook itself as a nixx body and read `.text` — so even the
+  #     hook is free of the ''${ } tax that a bare Nix-string shellHook pays.
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -18,17 +17,14 @@
 
   outputs = { nixpkgs, flake-utils, nixx, ... }:
     flake-utils.lib.eachDefaultSystem (system:
+      with nixx.for nixpkgs.legacyPackages.${system};
       let
-        pkgs = import nixpkgs { inherit system; };
-        n = nixx.lib;
-        writers = nixx.writers pkgs;
-
-        tasks = with n.runtimeScope; writers.mkTasks { name = "tasks"; } {
-          build = n.task { description = "Build (raw bash)"; } (n.bash ''
+        tasks = mkTasks { name = "tasks"; } {
+          build = task { description = "Build (raw bash)"; } (bash ''
             out="${OUT_DIR:-dist}"
             echo "building into $out for ${USER}"
           '');
-          check = n.task { description = "A node check"; requirements = [ pkgs.nodejs ]; } (n.node ''
+          check = task { description = "A node check"; requirements = [ pkgs.nodejs ]; } (node ''
             const env = process.env.NODE_ENV || "dev";
             console.log(`checking in ${env} mode`);
           '');
@@ -36,14 +32,13 @@
 
         # The shellHook body, authored with NO ''${ } tax. `.text` is the
         # source-read body — ${VAR} is shell's, resolved when the hook runs.
-        welcome = with n.runtimeScope;
-          (n.mkTasks { } {
-            hook = n.bash ''
-              echo "── ${USER}'s dev shell ───────────────"
-              echo "   PWD=${PWD}"
-              echo "   run 'tasks' to see what's available"
-            '';
-          }).tasks.hook.text;
+        welcome = (mkTasks { } {
+          hook = bash ''
+            echo "── ${USER}'s dev shell ───────────────"
+            echo "   PWD=${PWD}"
+            echo "   run 'tasks' to see what's available"
+          '';
+        }).tasks.hook.text;
       in
       {
         packages.default = tasks.runner;
