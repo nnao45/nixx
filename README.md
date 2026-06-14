@@ -1,5 +1,8 @@
 # nixx — Write real shell, JavaScript, Python, and TypeScript inside Nix — without escaping ${}.
 
+[![nix flake check](https://github.com/nnao45/nixx/actions/workflows/nix-version-compat.yml/badge.svg)](https://github.com/nnao45/nixx/actions/workflows/nix-version-compat.yml)
+[![Nix ≥ 2.18](https://img.shields.io/badge/nix-%E2%89%A52.18-5277C3?logo=nixos)](https://nixos.org/download/)
+
 One `with`, and a `${VAR}` in a script body is the **shell's**, not Nix's —
 read from source, never escaped. No preprocessor, no codegen; files stay valid
 `.nix`, so nil/nixd never error.
