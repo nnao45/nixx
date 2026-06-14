@@ -41,6 +41,9 @@
         pkgs = import nixpkgs { inherit system; };
         nixx = lib;
         inherit (writersFor pkgs) mkApps;
+        # The pkgs-bound mkTasks (derivation + devShell), distinct from the pure
+        # `nixx.mkTasks`. Only this one carries the global `packages` option.
+        writersMkTasks = (writersFor pkgs).mkTasks;
 
         # Pure-Nix lib tests, evaluated at flake-eval time.
         # A failing assertion throws here and prevents the flake from building.
@@ -246,6 +249,60 @@
             '');
           }).runner;
 
+        # ── e2e-packages: command-dependency resolution via the `packages` option ──
+        # Unlike the others, this check ACTUALLY RUNS the runner (in runCommand)
+        # and asserts two contracts of `writers.mkTasks { packages = [...] }`:
+        #
+        #   (1) nix-run path — the runner resolves `jq` from its OWN wrapped
+        #       runtimeInputs, with NO ambient jq on the build PATH. That proves
+        #       the resolution comes from the `packages` option, not the env.
+        #       A command never listed (`rg`) must stay unresolved.
+        #   (2) prompt path — devShell AND extendShell put `packages` on the shell
+        #       PATH too (not only inside the wrapped runner). Asserted at eval
+        #       time by name-superset; mkShell may carry a non-default output, so
+        #       object identity is unreliable. `nix print-dev-env` was used to
+        #       confirm jq's bin output really lands on PATH.
+        e2ePackages =
+          let
+            tasks = writersMkTasks { name = "e2e-packages"; packages = [ pkgs.jq ]; } {
+              uses_pkg = nixx.sh ''
+                command -v jq >/dev/null \
+                  || { echo "FAIL: jq not resolved from packages (runner runtimeInputs)"; exit 1; }
+                echo '{"ok":true}' | jq -e .ok >/dev/null \
+                  || { echo "FAIL: jq present but not functional"; exit 1; }
+                echo "PASS: packages command resolved in runner (nix run path)"
+              '';
+              not_listed = nixx.sh ''
+                if command -v rg >/dev/null; then
+                  echo "FAIL: ripgrep resolved but was never listed in packages"; exit 1
+                fi
+                echo "PASS: a command absent from packages stays unresolved"
+              '';
+              all = nixx.task { deps = [ "uses_pkg" "not_listed" ]; } (nixx.sh ''
+                echo "=== e2e-packages: ALL PASSED ==="
+              '');
+            };
+            shellNames = shell: map (d: d.name or "?")
+              ((shell.buildInputs or [ ])
+              ++ (shell.nativeBuildInputs or [ ])
+              ++ (shell.propagatedBuildInputs or [ ]));
+            exposes = shell:
+              builtins.all (p: builtins.elem (p.name or "?") (shellNames shell)) [ pkgs.jq ];
+            devOk = exposes tasks.devShell;
+            extendOk = exposes (tasks.extendShell (pkgs.mkShell { }));
+          in
+          assert devOk || throw "e2e-packages: devShell does not expose `packages` on the prompt PATH";
+          assert extendOk || throw "e2e-packages: extendShell does not expose `packages` on the prompt PATH";
+          pkgs.runCommand "e2e-packages" { } ''
+            if command -v jq >/dev/null 2>&1; then
+              echo "PRECONDITION FAIL: jq is on the build PATH — the nix-run test would be vacuous"; exit 1
+            fi
+            ${tasks.runner}/bin/e2e-packages all
+            echo "PASS: devShell + extendShell expose packages on prompt PATH (eval-asserted)"
+            echo "=== e2e-packages: ALL PASSED ==="
+            touch "$out"
+          '';
+
       in
       rec {
         # ---- example applications, one per language ----
@@ -349,6 +406,7 @@
           e2e-edge = e2eEdge;
           e2e-global-env = e2eGlobalEnv;
           e2e-circular = e2eCircular;
+          e2e-packages = e2ePackages;
         };
       });
 }

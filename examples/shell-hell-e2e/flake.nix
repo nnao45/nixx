@@ -12,6 +12,8 @@
       let
         pkgs = import nixpkgs { inherit system; };
         n = nixx.lib;
+        # pkgs-bound mkTasks (carries the global `packages` option + devShell).
+        w = nixx.writers pkgs;
         mkE2e = name: runner:
           pkgs.writeShellApplication { inherit name; text = runner; };
       in
@@ -210,6 +212,49 @@
                 '');
               }).runner;
 
+            # ── e2e-packages: command-dependency resolution via `packages` ────────
+            # Actually RUNS the runner: `jq` resolves from the runner's own wrapped
+            # runtimeInputs (no ambient jq), and an unlisted command (`rg`) stays
+            # unresolved. Also eval-asserts that devShell + extendShell re-expose
+            # `packages` on the prompt PATH (not only inside the wrapped runner).
+            e2ePackages =
+              let
+                tasks = w.mkTasks { name = "e2e-packages"; packages = [ pkgs.jq ]; } {
+                  uses_pkg = n.sh ''
+                    command -v jq >/dev/null \
+                      || { echo "FAIL: jq not resolved from packages"; exit 1; }
+                    echo '{"ok":true}' | jq -e .ok >/dev/null \
+                      || { echo "FAIL: jq present but not functional"; exit 1; }
+                    echo "PASS: packages command resolved in runner (nix run path)"
+                  '';
+                  not_listed = n.sh ''
+                    if command -v rg >/dev/null; then
+                      echo "FAIL: ripgrep resolved but was never listed"; exit 1
+                    fi
+                    echo "PASS: a command absent from packages stays unresolved"
+                  '';
+                  all = n.task { deps = [ "uses_pkg" "not_listed" ]; } (n.sh ''
+                    echo "=== e2e-packages: ALL PASSED ==="
+                  '');
+                };
+                shellNames = shell: map (d: d.name or "?")
+                  ((shell.buildInputs or [ ])
+                    ++ (shell.nativeBuildInputs or [ ])
+                    ++ (shell.propagatedBuildInputs or [ ]));
+                exposes = shell:
+                  builtins.all (p: builtins.elem (p.name or "?") (shellNames shell)) [ pkgs.jq ];
+              in
+              assert exposes tasks.devShell || throw "devShell does not expose packages";
+              assert exposes (tasks.extendShell (pkgs.mkShell { })) || throw "extendShell does not expose packages";
+              pkgs.runCommand "e2e-packages" { } ''
+                if command -v jq >/dev/null 2>&1; then
+                  echo "PRECONDITION FAIL: jq on build PATH; test vacuous"; exit 1
+                fi
+                ${tasks.runner}/bin/e2e-packages all
+                echo "PASS: devShell + extendShell expose packages (eval-asserted)"
+                touch "$out"
+              '';
+
           in
           {
             e2e-deps = e2eDeps;
@@ -218,6 +263,7 @@
             e2e-combo = e2eCombo;
             e2e-edge = e2eEdge;
             e2e-circular = e2eCircular;
+            e2e-packages = e2ePackages;
 
             default = pkgs.writeShellApplication {
               name = "e2e-all";
@@ -238,6 +284,8 @@
                 echo ""
                 ${e2eCircular}/bin/e2e-circular all
                 echo ""
+                echo "e2e-packages: built & asserted at ${e2ePackages}"
+                echo ""
                 echo "╔══════════════════════════════════════════╗"
                 echo "║      ALL E2E TESTS PASSED ★              ║"
                 echo "╚══════════════════════════════════════════╝"
@@ -256,6 +304,7 @@
             echo "  nix run .#e2e-combo -- all   parent→child export"
             echo "  nix run .#e2e-edge -- all    empty / special chars / defaultDeps"
             echo "  nix run .#e2e-circular -- all  circular deps"
+            echo "  nix build .#e2e-packages      packages → runner PATH + devShell exposure"
           '';
         };
       });

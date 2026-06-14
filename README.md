@@ -6,44 +6,35 @@ read from source, never escaped. No preprocessor, no codegen; files stay valid
 
 ```nix
 {
-  packages = with nixx.for pkgs; mkApps { } {
+  packages = with inputs.nixx.for pkgs; mkApps { packages = [ pkgs.rsync ]; } {
     deploy = bash ''
-      echo "deploying from ${HOME}"       # ${} is shell's — no ''${ } escape
+      echo "deploying from ${HOME}"          # ${} is shell's — no ''${ } escape
       rsync -a ./dist/ "$HOST:/srv/"
-    '' { packages = [ pkgs.rsync ]; };
-    report = uv ''
-      from rich import print
-      print("[bold green]done[/]")
-    '' { requirements = [ "rich" ]; };
-    validate = bun ''
-      const ok: boolean = true;
-      console.log(`status: ${ok}`);       # TS template literal, verbatim
-    '' { compile = true; };
+    '';
   };
 }
 ```
 
-`nix run .#deploy`, and you have a shippable `/nix/store/.../bin/deploy`.
-Use `mkTasks` when you want a tab-completed `tasks build` / `tasks check`
-workflow.
+`nix run .#deploy` ships a `/nix/store/.../bin/deploy`. Swap `mkApps` for
+`mkTasks` when you want a tab-completed `tasks build` / `tasks check` workflow.
 
 **Add to your flake:**
 ```nix
 inputs.nixx.url = "github:nnao45/nixx";
-# in a per-system output, with `pkgs` in scope:
-#   { packages = with inputs.nixx.for pkgs; mkApps { } { hello = bash ''…''; }; }
+# then, in a per-system output with `pkgs` in scope:
+#   { packages = with inputs.nixx.for pkgs; mkApps { } { hello = bash ''echo hi''; }; }
 ```
 
 > Also speaks python (uv), typescript (bun/tsx), node, deno, perl, ruby, lua —
-> and bundles dev workflows with `mkTasks`. Full reference,
-> dependency wiring, and option tables in **[API.md](./API.md)**.
+> and bundles dev workflows with `mkTasks`. Full reference, dependency wiring,
+> and option tables in **[API.md](./API.md)**.
 
 ## `${}` — what's raw, what's constrained
 Every body passed as an attr value to `mkApps`, `mkTasks`, or `mkScripts` is
 read **from source** instead of evaluated, so a `${VAR}` in the `${}` family —
 shell `${HOME}`, a JS template `` `${x}` ``, a perl `${name}` — survives
 verbatim with **no `''` prefix**. The one line of ceremony is the `with`
-(`nixx.for pkgs`, or just `nixx.runtimeScope` for the deferral alone): any
+(`inputs.nixx.for pkgs`, or just `nixx.runtimeScope` for the deferral alone): any
 `with` makes the scope dynamic, which defers Nix's static undefined-variable
 check to a runtime that never arrives (the body is never forced). To splice in
 an actual **Nix** value, use the `@nix(x)` / `@sh:q(x)` markers — native Nix
@@ -70,113 +61,92 @@ programmatic guard — in [API.md](./API.md).)
 `with` on the flake output that builds your tasks; evaluated code still errors
 clearly at runtime.
 
-## Per-app options — call the block with opts
-Call the block like a function with an attrset of language-specific options.
-No `app { } (...)` wrapper needed:
+## Per-app options
+Call a block like a function with an attrset of options — no `app { } (...)`
+wrapper:
 
 ```nix
-with nixx.for pkgs;
-mkApps { packages = [ pkgs.curl pkgs.jq ]; } {
-  # bash — packages is a global option on mkApps (adds to PATH for all apps)
-  fetch  = bash ''
+with inputs.nixx.for pkgs;
+mkApps { packages = [ pkgs.curl pkgs.jq ]; } {   # ← packages is global (whole set)
+  fetch = bash ''
     curl -s https://api.example.com | jq .
-  '';
+  '';                                            # ← no opts needed
 
-  # python/uv — language-specific options are still per-block
   report = uv ''
     from rich import print
     print("[green]ok[/]")
-  '' { requirements = [ "rich>=13" ]; };
+  '' { requirements = [ "rich>=13" ]; };          # ← per-block
 
-  # bun — compile to a self-contained binary
-  check  = bun ''
+  check = bun ''
     const r: { ok: boolean } = { ok: true };
     console.log(`status: ${r.ok}`);
-  '' { compile = true; };
-
-  # point at the project's own pyproject.toml + uv.lock
-  serve  = uv ''
-    import myapp; myapp.start()
-  '' { projectRoot = ./.; };
+  '' { compile = true; };                         # ← per-block
 }
 ```
 
-`packages` is a **global** option: specify it once on `mkApps { }` and it
-applies to every app in the set. Language-specific options (`requirements`,
-`compile`, `projectRoot`, …) are still attached per-block by calling the block
-as a function: `bash ''body'' { compile = true; }`.
-`app { ... } block` still works as a backwards-compatible helper.
+One rule: **`packages` is global** (first attrset of `mkApps` / `mkTasks`); the
+language options are **per-block**. Passing `packages` per-block or per-task
+throws, on purpose.
+
+| option | level | what it does |
+|---|---|---|
+| `packages` | **global** — `mkApps { }` / `mkTasks { }` first attrset | `/bin` on PATH for **every** app/task |
+| `requirements` | per-block (uv) | PEP 723 inline deps |
+| `compile` | per-block (bun) | `bun --compile` → standalone binary |
+| `projectRoot` | per-block (uv/bun) | deps from `./pyproject.toml` / `package.json` |
+
+`app { ... } block` still works as a backwards-compatible helper. Everything
+else (full option matrix, `mkScript(s)`, `vars` markers) is in
+**[API.md](./API.md)**.
 
 ## Apps and shells
-`mkApps` builds store binaries. `mkTasks` builds a just-style runner for local
-workflows. They compose: put app derivations in `vars`, then call them from
-tasks with `@nix(name)`.
-
-```nix
-with nixx.for pkgs;
-let
-  apps = mkApps { } {
-    status = bash ''echo "${USER} in ${PWD}"'';
-    report = uv ''
-      from rich import print
-      print("[green]ok[/]")
-    '' { requirements = [ "rich" ]; };
-  };
-  tasks = mkTasks { name = "tasks"; vars = apps; } {
-    check = bash ''
-      status="@nix(status)"
-      report="@nix(report)"
-      "$status/bin/status"
-      "$report/bin/report"
-    '';
-  };
-in { packages = apps // { default = tasks.runner; tasks = tasks.runner; }; }
-```
+`mkApps` builds store binaries; `mkTasks` builds a just-style runner. They
+compose — app derivations go in the runner's `vars`, tasks call them with
+`@nix(name)`. Wired example in **[API.md](./API.md)**.
 
 ## devShell / devenv / mkShell — pick your idiom
-Same `with nixx.for pkgs;`, same zero-`${}`-tax bodies; only the wiring differs.
-Runnable flakes in `examples/`. These examples expose a small `mkApps` binary
-under `packages` and put the `tasks` runner in the shell.
+Same `with inputs.nixx.for pkgs;`, same zero-`${}`-tax bodies; only the wiring
+differs. Runnable flakes in `examples/`.
 
-**Plain flake `devShells.default`** (`examples/devshell`) — zero-config:
+**`devShells.default`** (`examples/devshell`) — zero-config; the runner lands on
+PATH, tab-completed:
 ```nix
-with nixx.for pkgs;
+with inputs.nixx.for pkgs;
 let
   apps  = mkApps { } { whereami = bash ''echo ${PWD} as ${USER}''; };
-  tasks = mkTasks { name = "tasks"; } {
-    info = bash ''echo ${PWD} as ${USER}'';
-  };
+  tasks = mkTasks { name = "tasks"; } { info = bash ''echo ${PWD} as ${USER}''; };
 in {
   packages = apps // { default = tasks.runner; tasks = tasks.runner; };
-  devShells.default = tasks.devShell;          # `tasks` on PATH, tab-completed
+  devShells.default = tasks.devShell;
 }
 ```
 
-**Hand-rolled `pkgs.mkShell`** (`examples/mkshell`) — you keep full control;
-`extendShell` folds the runner + completion into *your* shell:
+**`pkgs.mkShell`** (`examples/mkshell`) — you keep full control; `extendShell`
+folds the runner into *your* shell:
 ```nix
-with nixx.for pkgs;
+with inputs.nixx.for pkgs;
 let
-  apps  = mkApps { packages = [ pkgs.jq ]; } {
-    envcheck = bash ''jq --version'';
+  apps  = mkApps { packages = [ pkgs.jq ]; } { envcheck = bash ''jq --version''; };
+  # nodejs is in mkTasks.packages because a TASK calls it — resolves via
+  # `nix run .#tasks` AND at the prompt (single source of truth; see API.md).
+  tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs ]; } {
+    build = bash ''echo ${OUT_DIR:-dist}'';
   };
-  tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs ]; } { build = bash ''echo ${OUT_DIR:-dist}''; };
 in {
   packages = apps // { default = tasks.runner; };
   devShells.default = tasks.extendShell (pkgs.mkShell {
-    packages  = [ pkgs.jq pkgs.ripgrep ];
-    # even the hook is ${}-tax-free — it's a nixx body's .text:
+    packages = [ pkgs.jq pkgs.ripgrep ];   # prompt-only — no task calls these
+    # even the hook is ${}-tax-free:
     shellHook = (mkTasks { } { h = bash ''echo "hi ${USER}"''; }).tasks.h.text;
   });
 }
 ```
 
-**devenv** (`examples/devenv`) — complementary, not a replacement: devenv owns
-the environment, nixx owns the scripting. Drop the runner in `packages`, feed
-body `.text` into `enterShell` / `scripts.<n>.exec` (both are Nix strings that
-otherwise pay the `${}` tax):
+**devenv** (`examples/devenv`) — devenv owns the environment, nixx owns the
+scripting; feed body `.text` into `enterShell` / `scripts.<n>.exec` (Nix strings
+that would otherwise pay the `${}` tax):
 ```nix
-with nixx.for pkgs;
+with inputs.nixx.for pkgs;
 let
   apps   = mkApps { } { hello = bash ''echo "ready, ${USER}"''; };
   tasks  = mkTasks { name = "tasks"; } { fmt = bash ''echo ${PWD}''; };
@@ -186,21 +156,19 @@ in {
   devShells.default = devenv.lib.mkShell {  # + inherit inputs pkgs; — see examples/devenv
     modules = [{
       packages   = [ tasks.runner ];
-      enterShell = bodies.tasks.enter.text; # a Nix string, yet ${USER} stays raw
+      enterShell = bodies.tasks.enter.text;   # ${USER} stays raw
     }];
   };
 }
 ```
 
 ## Task runner
-`mkTasks` is a `just`-style runner: one `tasks <name>` invocation is a **single
-bash process**, so an `export` in an early task (or `defaultDeps`/`env`) persists
-into every later task. **Only env crosses task boundaries** — cwd and shell
-options are normalized at each task's entry (every bash task is `set -euo
-pipefail`; a dep's `cd` or `set +u` can't leak in), so tasks stay predictable.
-Tasks support `deps` (just-style prerequisites), `group`, per-task `cwd` / `env`.
-`packages` is a **global** option on `writers.mkTasks { packages = [...]; }`:
-packages are added to PATH for every task in the runner.
+`mkTasks` is a `just`-style runner: one `tasks <name>` is a **single bash
+process**, so an `export` (or `defaultDeps`/`env`) in an early task persists into
+every later one. **Only env crosses task boundaries** — cwd and shell options
+reset at each task's entry (every bash task is `set -euo pipefail`; a dep's `cd`
+or `set +u` can't leak), so tasks stay predictable. Supports `deps`, `group`,
+per-task `cwd` / `env`.
 
 ```
 $ tasks --list
@@ -210,16 +178,19 @@ $ tasks --list
 release:
   deploy   Deploy production
 
-$ tasks build
+$ tasks build      # or: nix run .#tasks -- build
 ```
 
-`nix run .#tasks -- build` works too. Options, `env`/`deps` semantics, and the
-pure (no-pkgs) `nixx.mkTasks` → [API.md](./API.md).
+`packages` is global on `mkTasks` — same rule as `mkApps` (see
+[Per-app options](#per-app-options)). **One trap:** if a task calls a tool, put
+it in `mkTasks { packages }`, never only in `mkShell` — a `mkShell`-only package
+is absent from `nix run .#tasks`, so the task works under `nix develop` but
+breaks as a shipped binary. Full options and `env`/`deps` semantics in
+**[API.md](./API.md)**.
 
 ## More
-- **Multi-language & shippable binaries** — `mkApps { packages = […] }` (global PATH), language opts (`bash ''…'' { compile = true; }`),
-  `projectRoot` dependency wiring, `mkScript(s)`, `vars` markers, language table:
-  **[API.md](./API.md)**.
-- **Linter source-mapping** — blocks carry their source position, so
-  shellcheck / ruff diagnostics remap back to the exact `.nix` `line:col`, even
-  under nested indentation (details in [API.md](./API.md)).
+- **Multi-language & shippable binaries**, `mkScript(s)`, `vars` markers
+  (`@nix`, `@sh:q`), the full language/option tables: **[API.md](./API.md)**.
+- **Linter source-mapping** — blocks carry their source position, so shellcheck
+  / ruff diagnostics remap back to the exact `.nix` `line:col`, even under nested
+  indentation. Details in [API.md](./API.md).
