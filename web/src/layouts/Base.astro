@@ -1,0 +1,59 @@
+---
+import "../styles/global.css";
+import { base } from "../lib/base";
+import Header from "../components/Header.astro";
+import Footer from "../components/Footer.astro";
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+const {
+  title = "nixx — write raw shell inside Nix",
+  description = "Write real shell, JavaScript, Python, and TypeScript inside Nix — without escaping ${}. Read from source, never evaluated.",
+} = Astro.props;
+
+const canonical = new URL(Astro.url.pathname, Astro.site).toString();
+---
+
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href={`${base}favicon.svg`} />
+    <link rel="canonical" href={canonical} />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="dark light" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- dark-first, no flash: default dark unless the user explicitly chose light -->
+    <script is:inline>
+      (function () {
+        var t = localStorage.getItem("theme");
+        var html = document.documentElement;
+        if (t === "light") html.classList.remove("dark");
+        else html.classList.add("dark");
+      })();
+    </script>
+  </head>
+  <body class="min-h-dvh antialiased">
+    <div class="isolate flex min-h-dvh flex-col">
+      <Header />
+      <main class="flex-1">
+        <slot />
+      </main>
+      <Footer />
+    </div>
+  </body>
+</html>

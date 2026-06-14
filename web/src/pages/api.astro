@@ -1,0 +1,32 @@
+---
+import Base from "../layouts/Base.astro";
+import { renderDoc } from "../lib/content";
+
+const { html, headings } = await renderDoc("API");
+const toc = headings.filter((h) => h.depth >= 2 && h.depth <= 3);
+---
+
+<Base title="nixx — API reference">
+  <div class="mx-auto w-full max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
+    <div class="lg:grid lg:grid-cols-[minmax(0,1fr)_15rem] lg:gap-12">
+      <article class="prose max-w-[78ch]" set:html={html} />
+
+      <aside class="hidden lg:block">
+        <div class="sticky top-20">
+          <p class="mb-3 font-mono text-xs uppercase tracking-wide text-neutral-500">// contents</p>
+          <nav class="flex flex-col gap-0.5 border-l border-neutral-200 text-sm dark:border-neutral-800" aria-label="On this page">
+            {toc.map((h) => (
+              <a
+                href={`#${h.slug}`}
+                class:list={[
+                  "-ml-px border-l border-transparent py-1 pl-3 text-neutral-600 transition-colors hover:border-amber-500/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100",
+                  h.depth === 3 && "pl-6",
+                ]}
+              >{h.text}</a>
+            ))}
+          </nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+</Base>

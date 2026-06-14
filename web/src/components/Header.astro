@@ -1,0 +1,80 @@
+---
+import { base } from "../lib/base";
+import ThemeToggle from "./ThemeToggle.astro";
+
+const norm = (s: string) => s.replace(/\/+$/, "") || "/";
+const here = norm(Astro.url.pathname);
+
+const links = [
+  { href: `${base}`, label: "README" },
+  { href: `${base}api/`, label: "API" },
+  { href: `${base}llms/`, label: "for LLMs" },
+];
+const isActive = (href: string) => here === norm(href);
+---
+
+<header class="sticky top-0 z-50 border-b border-neutral-200/80 bg-neutral-50/85 backdrop-blur dark:border-neutral-800/80 dark:bg-neutral-950/85">
+  <div class="mx-auto flex h-14 w-full max-w-5xl items-center gap-3 px-4 sm:px-6">
+    <a href={`${base}`} aria-label="Homepage" class="font-mono text-sm font-semibold tracking-tight">
+      <span class="text-amber-500">$</span> nixx
+    </a>
+
+    <div class="ml-auto flex items-center gap-1">
+      <nav class="hidden items-center gap-1 lg:flex" aria-label="Primary">
+        {links.map((l) => (
+          <a
+            href={l.href}
+            aria-current={isActive(l.href) ? "page" : undefined}
+            class:list={[
+              "rounded-md px-3 py-1.5 text-sm",
+              isActive(l.href)
+                ? "bg-neutral-200/70 text-neutral-900 dark:bg-neutral-800/70 dark:text-neutral-100"
+                : "text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100",
+            ]}
+          >{l.label}</a>
+        ))}
+      </nav>
+
+      <ThemeToggle />
+
+      <button
+        type="button"
+        aria-label="Toggle menu"
+        aria-expanded="false"
+        data-menu-toggle
+        class="relative inline-flex size-9 items-center justify-center rounded-md text-neutral-600 hover:bg-neutral-200/60 lg:hidden dark:text-neutral-400 dark:hover:bg-neutral-800/60"
+      >
+        <span class="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2 pointer-fine:hidden" aria-hidden="true"></span>
+        <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+          <path d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="hidden border-t border-neutral-200/80 lg:hidden dark:border-neutral-800/80" data-menu>
+    <nav class="mx-auto flex w-full max-w-5xl flex-col gap-1 px-4 py-3 sm:px-6" aria-label="Mobile">
+      {links.map((l) => (
+        <a
+          href={l.href}
+          aria-current={isActive(l.href) ? "page" : undefined}
+          class:list={[
+            "rounded-md px-3 py-2 text-sm",
+            isActive(l.href)
+              ? "bg-neutral-200/70 text-neutral-900 dark:bg-neutral-800/70 dark:text-neutral-100"
+              : "text-neutral-700 dark:text-neutral-300",
+          ]}
+        >{l.label}</a>
+      ))}
+    </nav>
+  </div>
+</header>
+
+<script>
+  const btn = document.querySelector("[data-menu-toggle]");
+  const menu = document.querySelector("[data-menu]");
+  btn?.addEventListener("click", () => {
+    const open = menu?.classList.toggle("hidden") === false;
+    btn.setAttribute("aria-expanded", String(open));
+  });
+</script>

@@ -1,0 +1,13 @@
+---
+import { base } from "../lib/base";
+---
+<footer class="border-t border-neutral-200/80 dark:border-neutral-800/80">
+  <div class="mx-auto flex w-full max-w-5xl flex-col gap-2 px-4 py-8 text-sm text-neutral-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 dark:text-neutral-400">
+    <p class="font-mono"><span class="text-amber-500">$</span> nixx — raw shell inside Nix</p>
+    <nav class="flex items-center gap-4 font-mono" aria-label="Footer">
+      <a class="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100" href="https://github.com/nnao45/nixx">github</a>
+      <a class="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100" href={`${base}llms.txt`}>llms.txt</a>
+      <a class="transition-colors hover:text-neutral-900 dark:hover:text-neutral-100" href="https://github.com/nnao45/nixx/blob/main/README.md">source</a>
+    </nav>
+  </div>
+</footer>
