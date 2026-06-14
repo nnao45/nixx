@@ -1,0 +1,14 @@
+---
+import Base from "../layouts/Base.astro";
+import Hero from "../components/Hero.astro";
+import { renderDoc } from "../lib/content";
+
+const { html } = await renderDoc("README", { stripFirstH1: true });
+---
+
+<Base title="nixx — write raw shell inside Nix">
+  <Hero />
+  <section id="readme" class="mx-auto w-full max-w-5xl scroll-mt-20 px-4 py-12 sm:px-6 sm:py-16">
+    <div class="prose max-w-[78ch]" set:html={html} />
+  </section>
+</Base>

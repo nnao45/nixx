@@ -1,0 +1,59 @@
+name: deploy-site
+
+# Build the nixx website (web/) and publish it to GitHub Pages.
+# The site is built through nixx's own mkTasks runner — `nix run ./web/#tasks -- build`
+# — so the same tasks that drive local dev also drive CI. node+npm come from the
+# flake (mkTasks `packages`), not from setup-node.
+#
+# Repo setting needed once: Settings → Pages → Build and deployment → Source: GitHub Actions.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "README.md"
+      - "API.md"
+      - "lib.nix"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one in-flight deploy at a time; don't cancel a running one mid-publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          nix_path: nixpkgs=channel:nixpkgs-unstable
+
+      - name: Build site (via nixx tasks)
+        working-directory: web
+        run: nix run .#tasks -- build
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

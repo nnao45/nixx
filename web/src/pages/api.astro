@@ -1,0 +1,318 @@
+---
+import Base from "../layouts/Base.astro";
+import OptionTable from "../components/OptionTable.astro";
+
+// exhaustive option data, sourced from lib.nix + writers.nix (ground truth)
+const constructors = [
+  { ctor: "sh · bash", lang: "bash", apps: "✓", runner: "inline" },
+  { ctor: "uv", lang: "python-uv", apps: "✓", runner: "heredoc → uv run" },
+  { ctor: "bun", lang: "bun", apps: "✓", runner: "heredoc → bun run" },
+  { ctor: "ts", lang: "typescript", apps: "✓", runner: "heredoc → tsx" },
+  { ctor: "node", lang: "node", apps: "✓", runner: "heredoc → node" },
+  { ctor: "deno", lang: "deno", apps: "✓", runner: "heredoc → deno run" },
+  { ctor: "py", lang: "python", apps: "—", runner: "heredoc → python3" },
+  { ctor: "perl", lang: "perl", apps: "—", runner: "heredoc → perl" },
+  { ctor: "ruby", lang: "ruby", apps: "—", runner: "heredoc → ruby" },
+  { ctor: "lua", lang: "lua", apps: "—", runner: "heredoc → lua" },
+];
+
+const mkAppsGlobal = [
+  { name: "packages", type: "[ drv ]", default: "[ ]", description: "Global — adds each pkg's <code>/bin</code> to PATH for <strong>every</strong> app. Per-block <code>packages</code> throws; set it here." },
+  { name: "vars", type: "attrset", default: "{ }", description: "Nix values spliced into bodies via <code>@nix(…)</code> markers." },
+];
+
+const blockBash = [
+  { name: "strict", type: "bool", default: "true", description: "<code>set -euo pipefail</code> preamble (delegated to <code>writeShellApplication</code>)." },
+];
+const blockUv = [
+  { name: "projectRoot", type: "path | null", default: "null", description: "Dir with <code>pyproject.toml</code> + <code>uv.lock</code>; <code>uv run --frozen</code> resolves from it. Preferred over <code>requirements</code>." },
+  { name: "requirements", type: "[ str ]", default: "[ ]", description: "Inline PEP 723 deps for one-off scripts. Ignored when <code>projectRoot</code> is set." },
+  { name: "pythonReq", type: "str", default: "\">=3.11\"", description: "<code>requires-python</code> constraint in the PEP 723 header." },
+  { name: "frozen", type: "bool", default: "true", description: "Pass <code>--frozen</code> (use the lock as-is); <code>false</code> re-resolves." },
+  { name: "lintIgnore", type: "[ str ]", default: "[ ]", description: "ruff rule codes to ignore at the build gate." },
+];
+const blockBun = [
+  { name: "projectRoot", type: "path | null", default: "null", description: "Dir with <code>package.json</code> + <code>bun.lock</code>; deps are baked in at build time." },
+  { name: "compile", type: "bool", default: "true", description: "<code>bun build --compile</code> → one self-contained binary. <code>false</code> emits a <code>bun</code>-shebang <code>.ts</code> (runtime auto-install)." },
+];
+const blockNode = [
+  { name: "nodeModules", type: "drv | null", default: "null", description: "Derivation providing <code>/lib/node_modules</code>; put on <code>NODE_PATH</code> (Node has no inline-dep mechanism)." },
+  { name: "syntaxCheck", type: "bool", default: "true", description: "<code>node --check</code> build gate." },
+];
+const blockTs = [
+  { name: "nodeModules", type: "drv | null", default: "null", description: "Derivation providing <code>/lib/node_modules</code> (<code>NODE_PATH</code>); tsx runs the <code>.ts</code> directly." },
+];
+
+const mkAppsDispatch = [
+  { lang: "bash", builder: "writeBashApplication", extra: "strict" },
+  { lang: "python-uv", builder: "writeUvApplication", extra: "projectRoot, frozen, requirements, pythonReq, lintIgnore" },
+  { lang: "bun", builder: "writeBunApplication", extra: "projectRoot, compile" },
+  { lang: "node", builder: "writeNodeApplication", extra: "nodeModules, syntaxCheck" },
+  { lang: "typescript", builder: "writeTsxApplication", extra: "nodeModules" },
+  { lang: "deno", builder: "writeDenoApplication", extra: "(none — inline via npm:/jsr:)" },
+];
+
+const mkAppsReturns = [
+  { name: "{ name = drv }", type: "attrset", description: "Each attr is a store binary at <code>/nix/store/…/bin/&lt;name&gt;</code>; attr name = binary name." },
+];
+
+const mktasksOpts = [
+  { name: "name", type: "str", default: "\"tasks\"", description: "Runner binary name (also the bash completion function name)." },
+  { name: "packages", type: "[ drv ]", default: "[ ]", description: "Global — baked into the runner's <code>runtimeInputs</code> <strong>and</strong> re-exposed on the <code>devShell</code>/<code>extendShell</code> prompt. Single source of truth (see README)." },
+  { name: "vars", type: "attrset", default: "{ }", description: "Nix values for <code>@nix(…)</code> markers." },
+  { name: "env", type: "attrset", default: "{ }", description: "Exported in <strong>every</strong> task body." },
+  { name: "defaultDeps", type: "[ str ]", default: "[ ]", description: "Task names run before every task; the default-dep tasks themselves are exempt (no loop)." },
+];
+const mktasksReturns = [
+  { name: "runner", type: "drv", description: "<code>writeShellApplication</code> (shellcheck-gated) — <code>nix run .#&lt;name&gt;</code>." },
+  { name: "devShell", type: "mkShell", description: "Runner + <code>packages</code> + a bash tab-completion hook for all task names." },
+  { name: "extendShell", type: "shell → mkShell", description: "Merge the runner + <code>packages</code> + hook into <em>your</em> shell." },
+  { name: "tasks", type: "attrset", description: "<code>name → block</code> (each carries <code>.text</code>, <code>.env</code>, <code>.cwd</code>, <code>.deps</code>, …)." },
+  { name: "meta", type: "[ … ]", description: "<code>[{ name, text, file, line, indent, description, group }]</code> — feeds linter source-mapping." },
+];
+
+const taskOpts = [
+  { name: "description", type: "str | null", default: "null", description: "One-line summary shown by <code>--list</code>." },
+  { name: "group", type: "str | null", default: "null", description: "Groups tasks under a header in <code>--list</code> output." },
+  { name: "deps", type: "[ str ]", default: "[ ]", description: "Prerequisite task names (just-style; each runs at most once per invocation)." },
+  { name: "env", type: "attrset", default: "{ }", description: "Exported before the body; merged with the runner's global <code>env</code>, per-task wins on conflict." },
+  { name: "cwd", type: "path | null", default: "null", description: "Working dir. The runner resets to the invocation dir, then <code>cd</code>s here — a dep's <code>cwd</code> never leaks in." },
+];
+
+const mktasksPureOpts = [
+  { name: "name", type: "str", default: "\"tasks\"" },
+  { name: "vars", type: "attrset", default: "{ }" },
+  { name: "defaultDeps", type: "[ str ]", default: "[ ]" },
+  { name: "env", type: "attrset", default: "{ }" },
+].map((o) => ({ ...o, description: "Same semantics as the pkgs-bound <code>mkTasks</code> option." }));
+const mktasksPureReturns = [
+  { name: "tasks", type: "attrset", description: "<code>name → block</code>." },
+  { name: "runner", type: "str", description: "The bash runner as a <strong>script string</strong> (no derivation — no pkgs)." },
+  { name: "meta", type: "[ … ]", description: "Source-mapping metadata." },
+];
+
+const mkScriptOpts = [
+  { name: "lang", type: "str | null", default: "null", description: "Overrides the block's <code>__lang</code>; falls back to <code>bash</code>." },
+  { name: "vars", type: "attrset", default: "{ }", description: "<code>@nix(…)</code> values." },
+  { name: "shebang", type: "str | null", default: "null", description: "Overrides the lang profile's shebang." },
+  { name: "strict", type: "bool | null", default: "null", description: "<code>set -euo pipefail</code> (bash profile default <code>true</code>; <code>null</code> → profile)." },
+  { name: "packages", type: "[ drv ]", default: "[ ]", description: "bash only — exported as <code>PATH</code>. Ignored for non-bash langs." },
+  { name: "requirements", type: "[ str ]", default: "[ ]", description: "uv — PEP 723 inline deps." },
+  { name: "pythonReq", type: "str | null", default: "null", description: "uv — <code>requires-python</code>." },
+];
+const mkScriptsOpts = [
+  { name: "lang", type: "str", default: "\"bash\"", description: "Applied to every script in the set." },
+  { name: "vars", type: "attrset", default: "{ }", description: "<code>@nix(…)</code> values." },
+];
+
+const varsMarkers = [
+  { name: "@nix(name)", type: "raw", default: "", description: "<code>toString</code> of the Nix value, spliced verbatim." },
+  { name: "@nix:q(name) · @sh:q(name)", type: "bash", default: "", description: "POSIX single-quoted shell literal (<code>shq</code>)." },
+  { name: "@py:q(name)", type: "python", default: "", description: "Double-quoted Python string literal." },
+  { name: "@js:q(name)", type: "js · ts", default: "", description: "JSON-style double-quoted JS/TS literal." },
+  { name: "(a path value)", type: "store", default: "", description: "Auto-imported into the store (reproducible; exec bit preserved)." },
+];
+
+const toc = [
+  ["constructors", "Constructors"],
+  ["block-options", "Block options"],
+  ["mkapps", "mkApps"],
+  ["mktasks", "mkTasks (runner)"],
+  ["task", "nixx.task"],
+  ["mktasks-pure", "nixx.mkTasks (pure)"],
+  ["mkscript", "mkScript / mkScripts"],
+  ["vars", "Vars markers"],
+  ["scope", "runtimeScope · for"],
+];
+---
+
+<Base title="nixx — API reference" description="Exhaustive nixx API reference: every constructor, option, and return value for mkApps, mkTasks, task, mkScript, and the vars markers.">
+  <div class="mx-auto w-full max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
+    <p class="font-mono text-sm text-amber-500">// reference</p>
+    <h1 class="mt-3 font-mono text-3xl font-semibold tracking-tight text-balance">API reference</h1>
+    <p class="mt-3 max-w-[70ch] text-neutral-600 text-pretty dark:text-neutral-400">
+      Every public function and the options it accepts — sourced from
+      <code class="font-mono text-amber-600 dark:text-amber-400">lib.nix</code> /
+      <code class="font-mono text-amber-600 dark:text-amber-400">writers.nix</code>. For the narrative guide, see
+      <a class="text-amber-600 underline underline-offset-2 hover:text-amber-500 dark:text-amber-400" href="https://github.com/nnao45/nixx/blob/main/API.md">API.md on GitHub</a>.
+    </p>
+
+    <div class="mt-10 lg:grid lg:grid-cols-[minmax(0,1fr)_15rem] lg:gap-12">
+      <div class="min-w-0">
+
+        <!-- constructors -->
+        <section id="constructors" class="scroll-mt-20">
+          <h2 class="font-mono text-xl font-semibold tracking-tight">Constructors</h2>
+          <p class="mt-2 text-neutral-600 dark:text-neutral-400">
+            <code class="font-mono text-amber-600 dark:text-amber-400">nixx.&lt;ctor&gt; ''body''</code> makes a block tagged with a language. Call it as a function to attach options:
+            <code class="font-mono text-amber-600 dark:text-amber-400">bun ''body'' &#123; compile = true; &#125;</code>.
+          </p>
+          <div class="my-5 overflow-x-auto">
+            <table class="w-full border-collapse text-[0.9rem]">
+              <thead>
+                <tr class="border-b border-neutral-300 dark:border-neutral-700">
+                  <th class="py-2 pe-4 text-start font-semibold whitespace-nowrap">constructor</th>
+                  <th class="py-2 pe-4 text-start font-semibold whitespace-nowrap">__lang</th>
+                  <th class="py-2 pe-4 text-start font-semibold whitespace-nowrap">mkApps?</th>
+                  <th class="py-2 text-start font-semibold">in a runner</th>
+                </tr>
+              </thead>
+              <tbody>
+                {constructors.map((c) => (
+                  <tr class="border-b border-neutral-200/70 dark:border-neutral-800/70">
+                    <td class="py-2 pe-4 font-mono font-medium whitespace-nowrap text-amber-600 dark:text-amber-400">{c.ctor}</td>
+                    <td class="py-2 pe-4 font-mono whitespace-nowrap text-neutral-500 dark:text-neutral-400">{c.lang}</td>
+                    <td class="py-2 pe-4 whitespace-nowrap text-neutral-600 dark:text-neutral-300">{c.apps}</td>
+                    <td class="py-2 font-mono text-neutral-600 text-sm dark:text-neutral-400">{c.runner}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p class="mt-2 text-sm text-neutral-500 dark:text-neutral-400">
+            <code class="font-mono text-amber-600 dark:text-amber-400">mkApps</code> ships binaries for 6 langs; <code class="font-mono text-amber-600 dark:text-amber-400">py</code>/<code class="font-mono text-amber-600 dark:text-amber-400">perl</code>/<code class="font-mono text-amber-600 dark:text-amber-400">ruby</code>/<code class="font-mono text-amber-600 dark:text-amber-400">lua</code> have no binary builder but run fine as task/script bodies.
+          </p>
+        </section>
+
+        <!-- block options -->
+        <section id="block-options" class="mt-12 scroll-mt-20">
+          <h2 class="font-mono text-xl font-semibold tracking-tight">Block options</h2>
+          <p class="mt-2 text-neutral-600 dark:text-neutral-400">
+            Language-specific options attach per-block by calling the block. <code class="font-mono text-amber-600 dark:text-amber-400">packages</code> is <strong>global only</strong> (per-block throws). <code class="font-mono text-amber-600 dark:text-amber-400">nixx.app &#123; … &#125; block</code> is a back-compat helper that does the same thing.
+          </p>
+
+          <h3 class="mt-8 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">bash</h3>
+          <OptionTable options={blockBash} />
+
+          <h3 class="mt-8 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">uv (python-uv)</h3>
+          <OptionTable options={blockUv} />
+
+          <h3 class="mt-8 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">bun</h3>
+          <OptionTable options={blockBun} />
+
+          <h3 class="mt-8 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">node</h3>
+          <OptionTable options={blockNode} />
+
+          <h3 class="mt-8 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">ts (typescript)</h3>
+          <OptionTable options={blockTs} />
+
+          <h3 class="mt-8 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">deno</h3>
+          <p class="mt-2 text-sm text-neutral-500 dark:text-neutral-400">No language-specific options — declare deps inline via <code class="font-mono text-amber-600 dark:text-amber-400">npm:</code> / <code class="font-mono text-amber-600 dark:text-amber-400">jsr:</code> import specifiers.</p>
+        </section>
+
+        <!-- mkApps -->
+        <section id="mkapps" class="mt-12 scroll-mt-20">
+          <h2 class="font-mono text-xl font-semibold tracking-tight">
+            <span class="text-neutral-500">writers ·</span> mkApps
+          </h2>
+          <p class="mt-2 font-mono text-sm text-neutral-500 dark:text-neutral-400">mkApps &#123; … &#125; &#123; name = block; … &#125;</p>
+          <p class="mt-2 text-neutral-600 dark:text-neutral-400">Global options (first attrset) apply to every app. The block's <code class="font-mono text-amber-600 dark:text-amber-400">__lang</code> dispatches to a builder.</p>
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">global options</h3>
+          <OptionTable options={mkAppsGlobal} />
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">dispatch (lang → builder)</h3>
+          <div class="my-5 overflow-x-auto">
+            <table class="w-full border-collapse text-[0.9rem]">
+              <thead>
+                <tr class="border-b border-neutral-300 dark:border-neutral-700">
+                  <th class="py-2 pe-4 text-start font-semibold whitespace-nowrap">__lang</th>
+                  <th class="py-2 pe-4 text-start font-semibold whitespace-nowrap">builder</th>
+                  <th class="py-2 text-start font-semibold">extra options picked</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mkAppsDispatch.map((d) => (
+                  <tr class="border-b border-neutral-200/70 dark:border-neutral-800/70">
+                    <td class="py-2 pe-4 font-mono whitespace-nowrap text-amber-600 dark:text-amber-400">{d.lang}</td>
+                    <td class="py-2 pe-4 font-mono whitespace-nowrap text-neutral-500 dark:text-neutral-400">{d.builder}</td>
+                    <td class="py-2 font-mono text-neutral-600 text-sm dark:text-neutral-300">{d.extra}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">returns</h3>
+          <OptionTable options={mkAppsReturns} />
+        </section>
+
+        <!-- mkTasks (writers) -->
+        <section id="mktasks" class="mt-12 scroll-mt-20">
+          <h2 class="font-mono text-xl font-semibold tracking-tight">
+            <span class="text-neutral-500">writers ·</span> mkTasks
+          </h2>
+          <p class="mt-2 font-mono text-sm text-neutral-500 dark:text-neutral-400">mkTasks &#123; … &#125; &#123; name = block | task &#123;…&#125; block; … &#125;</p>
+          <p class="mt-2 text-neutral-600 dark:text-neutral-400">A just-style runner. One bash process, so an <code class="font-mono text-amber-600 dark:text-amber-400">export</code> in an early task persists into later ones; cwd and shell options reset at each task's entry.</p>
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">options</h3>
+          <OptionTable options={mktasksOpts} />
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">returns</h3>
+          <OptionTable options={mktasksReturns} />
+        </section>
+
+        <!-- task -->
+        <section id="task" class="mt-12 scroll-mt-20">
+          <h2 class="font-mono text-xl font-semibold tracking-tight">
+            <span class="text-neutral-500">lib ·</span> task
+          </h2>
+          <p class="mt-2 font-mono text-sm text-neutral-500 dark:text-neutral-400">task &#123; … &#125; (nixx.sh ''…'')</p>
+          <p class="mt-2 text-neutral-600 dark:text-neutral-400">Wraps a block as a runner task. Asserts: <code class="font-mono text-amber-600 dark:text-amber-400">needs</code> throws (renamed to <code class="font-mono text-amber-600 dark:text-amber-400">deps</code>); per-task <code class="font-mono text-amber-600 dark:text-amber-400">packages</code> throws (use the global). Positional args reach bash bodies as <code class="font-mono text-amber-600 dark:text-amber-400">$@</code>; non-bash bodies get them via <code class="font-mono text-amber-600 dark:text-amber-400">env</code>.</p>
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">options</h3>
+          <OptionTable options={taskOpts} />
+        </section>
+
+        <!-- mkTasks pure -->
+        <section id="mktasks-pure" class="mt-12 scroll-mt-20">
+          <h2 class="font-mono text-xl font-semibold tracking-tight">
+            <span class="text-neutral-500">lib ·</span> mkTasks (pure)
+          </h2>
+          <p class="mt-2 font-mono text-sm text-neutral-500 dark:text-neutral-400">nixx.mkTasks &#123; … &#125; &#123; name = block; … &#125;</p>
+          <p class="mt-2 text-neutral-600 dark:text-neutral-400">No <code class="font-mono text-amber-600 dark:text-amber-400">pkgs</code>, no <code class="font-mono text-amber-600 dark:text-amber-400">packages</code> option, no <code class="font-mono text-amber-600 dark:text-amber-400">devShell</code> — use it when you only need the runner script text or a body's <code class="font-mono text-amber-600 dark:text-amber-400">.text</code>.</p>
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">options</h3>
+          <OptionTable options={mktasksPureOpts} />
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">returns</h3>
+          <OptionTable options={mktasksPureReturns} />
+        </section>
+
+        <!-- mkScript -->
+        <section id="mkscript" class="mt-12 scroll-mt-20">
+          <h2 class="font-mono text-xl font-semibold tracking-tight">
+            <span class="text-neutral-500">lib ·</span> mkScript / mkScripts
+          </h2>
+          <p class="mt-2 font-mono text-sm text-neutral-500 dark:text-neutral-400">nixx.mkScript &#123; … &#125; block &nbsp;·&nbsp; nixx.mkScripts &#123; … &#125; &#123; name = block; … &#125;</p>
+          <p class="mt-2 text-neutral-600 dark:text-neutral-400">A standalone <code class="font-mono text-amber-600 dark:text-amber-400">mkScript</code> is <strong>evaluated</strong> (a bare <code class="font-mono text-amber-600 dark:text-amber-400">${`{VAR}`}</code> needs <code class="font-mono text-amber-600 dark:text-amber-400">''${</code>); <code class="font-mono text-amber-600 dark:text-amber-400">mkScripts</code> source-reads, so it pays zero <code class="font-mono text-amber-600 dark:text-amber-400">${`{}`}</code> tax.</p>
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">mkScript options</h3>
+          <OptionTable options={mkScriptOpts} />
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">mkScripts options</h3>
+          <OptionTable options={mkScriptsOpts} />
+          <p class="mt-3 text-sm text-neutral-500 dark:text-neutral-400">Returns <code class="font-mono text-amber-600 dark:text-amber-400">&#123; scripts, meta &#125;</code> — <code class="font-mono text-amber-600 dark:text-amber-400">scripts</code> is <code class="font-mono text-amber-600 dark:text-amber-400">name → text</code>; <code class="font-mono text-amber-600 dark:text-amber-400">meta</code> feeds the linter remap.</p>
+        </section>
+
+        <!-- vars -->
+        <section id="vars" class="mt-12 scroll-mt-20">
+          <h2 class="font-mono text-xl font-semibold tracking-tight">Vars markers</h2>
+          <p class="mt-2 text-neutral-600 dark:text-neutral-400">Splice an actual Nix value into a source-read body — native <code class="font-mono text-amber-600 dark:text-amber-400">${`{…}`}</code> does not run there. Values come from <code class="font-mono text-amber-600 dark:text-amber-400">vars = &#123; … &#125;</code> on <code class="font-mono text-amber-600 dark:text-amber-400">mkApps</code>/<code class="font-mono text-amber-600 dark:text-amber-400">mkTasks</code>/<code class="font-mono text-amber-600 dark:text-amber-400">mkScript</code>.</p>
+          <OptionTable options={varsMarkers} />
+        </section>
+
+        <!-- scope -->
+        <section id="scope" class="mt-12 scroll-mt-20">
+          <h2 class="font-mono text-xl font-semibold tracking-tight">runtimeScope · for</h2>
+          <OptionTable options={[
+            { name: "runtimeScope", type: "{} (empty)", description: "The attrset for <code>with nixx.runtimeScope;</code> — any <code>with</code> defers Nix's static undefined-variable check, so a bare <code>${`{VAR}`}</code> survives the source-read." },
+            { name: "inputs.nixx.for pkgs", type: "attrset", description: "<code>lib</code> + <code>writers(pkgs)</code> + <code>pkgs</code> in one set, for <code>with inputs.nixx.for pkgs;</code>. The single line of ceremony that un-prefixes the constructors <em>and</em> defers the check." },
+          ]} />
+        </section>
+
+      </div>
+
+      <aside class="hidden lg:block">
+        <div class="sticky top-20">
+          <p class="mb-3 font-mono text-xs uppercase tracking-wide text-neutral-500">// contents</p>
+          <nav class="flex flex-col gap-0.5 border-l border-neutral-200 text-sm dark:border-neutral-800" aria-label="On this page">
+            {toc.map(([id, label]) => (
+              <a href={`#${id}`} class="-ml-px border-l border-transparent py-1 pl-3 text-neutral-600 transition-colors hover:border-amber-500/60 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100">{label}</a>
+            ))}
+          </nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+</Base>

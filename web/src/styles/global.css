@@ -1,0 +1,202 @@
+@import "tailwindcss";
+
+/* class-based dark mode (toggled on <html>) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* the whole site is mono-forward: IBM Plex Mono for sans AND mono */
+  --font-sans: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    background-color: var(--color-neutral-50);
+    color: var(--color-neutral-900);
+  }
+  .dark body {
+    background-color: var(--color-neutral-950);
+    color: var(--color-neutral-100);
+  }
+  ::selection {
+    background-color: color-mix(in oklab, var(--color-amber-400) 35%, transparent);
+  }
+}
+
+/* ----------------------------------------------------------------------------
+   .prose — styles rendered markdown (README / API). No @tailwindcss/typography;
+   plain CSS so code blocks stay the chromeless "terminal hero" in both themes.
+---------------------------------------------------------------------------- */
+.prose {
+  color: var(--color-neutral-700);
+  font-size: 1rem;
+  line-height: 1.75;
+}
+.dark .prose {
+  color: var(--color-neutral-300);
+}
+.prose > :first-child {
+  margin-top: 0;
+}
+
+.prose :where(h1, h2, h3, h4, h5, h6) {
+  color: var(--color-neutral-900);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  margin-top: 2.5rem;
+  margin-bottom: 0.75rem;
+}
+.dark .prose :where(h1, h2, h3, h4, h5, h6) {
+  color: var(--color-neutral-50);
+}
+.prose h1 {
+  font-size: 2.25rem;
+  letter-spacing: -0.02em;
+}
+.prose h2 {
+  font-size: 1.5rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--color-neutral-200);
+}
+.dark .prose h2 {
+  border-bottom-color: var(--color-neutral-800);
+}
+.prose h3 {
+  font-size: 1.2rem;
+}
+.prose h4 {
+  font-size: 1.05rem;
+}
+
+.prose :where(p, ul, ol, blockquote, pre, table, hr) {
+  margin-top: 0;
+  margin-bottom: 1.25rem;
+}
+.prose :where(ul, ol) {
+  padding-left: 1.5rem;
+}
+.prose :where(ul) {
+  list-style: disc;
+}
+.prose :where(ol) {
+  list-style: decimal;
+}
+.prose :where(li) {
+  margin-top: 0.3rem;
+}
+.prose :where(li)::marker {
+  color: var(--color-neutral-400);
+}
+.dark .prose :where(li)::marker {
+  color: var(--color-neutral-600);
+}
+
+.prose :where(a) {
+  color: var(--color-amber-600);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklab, var(--color-amber-500) 40%, transparent);
+}
+.dark .prose :where(a) {
+  color: var(--color-amber-400);
+}
+.prose :where(a):hover {
+  text-decoration-color: currentColor;
+}
+
+.prose :where(strong) {
+  color: var(--color-neutral-900);
+  font-weight: 600;
+}
+.dark .prose :where(strong) {
+  color: var(--color-neutral-50);
+}
+
+.prose :where(blockquote) {
+  border-left: 2px solid var(--color-amber-500);
+  padding-left: 1rem;
+  color: var(--color-neutral-600);
+}
+.dark .prose :where(blockquote) {
+  color: var(--color-neutral-400);
+}
+
+/* inline code */
+.prose :where(code) {
+  font-size: 0.875em;
+  background: var(--color-neutral-200);
+  color: var(--color-amber-700);
+  padding: 0.1em 0.35em;
+  border-radius: 0.25rem;
+}
+.dark .prose :where(code) {
+  background: var(--color-neutral-900);
+  color: var(--color-amber-400);
+}
+
+/* fenced code — the hero. Shiki paints the tokens inline; we own the surface:
+   !important beats Shiki's inline theme bg (#24292e, cool blueish-gray) so the
+   block sits in the same warm neutral family as the page and the hero terminal. */
+.prose :where(pre) {
+  background: var(--color-neutral-900) !important;
+  border: 1px solid var(--color-neutral-800);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  line-height: 1.65;
+}
+.prose :where(pre) :where(code) {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+/* tables: horizontal rules only, scroll on small screens */
+.prose :where(table) {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+.prose :where(th, td) {
+  text-align: left;
+  border-bottom: 1px solid var(--color-neutral-200);
+  padding: 0.5rem 0.75rem;
+  white-space: nowrap;
+}
+.dark .prose :where(th, td) {
+  border-bottom-color: var(--color-neutral-800);
+}
+.prose :where(th) {
+  font-weight: 600;
+  color: var(--color-neutral-900);
+  text-transform: none;
+}
+.dark .prose :where(th) {
+  color: var(--color-neutral-100);
+}
+
+.prose :where(img) {
+  max-width: 100%;
+  border-radius: 0.5rem;
+}
+.prose :where(hr) {
+  border: 0;
+  border-top: 1px solid var(--color-neutral-200);
+  margin: 2rem 0;
+}
+.dark .prose :where(hr) {
+  border-top-color: var(--color-neutral-800);
+}

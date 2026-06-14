@@ -1,0 +1,44 @@
+---
+import { base } from "../lib/base";
+---
+<section class="border-b border-neutral-200/80 dark:border-neutral-800/80">
+  <div class="mx-auto w-full max-w-5xl px-4 py-16 sm:px-6 sm:py-24">
+    <p class="font-mono text-sm text-amber-500">// one `with`, no <span class="text-amber-600/80 dark:text-amber-400/80">${`{}`}</span> escape</p>
+
+    <h1 class="mt-4 max-w-[16ch] font-mono text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
+      Write raw shell inside Nix.
+    </h1>
+
+    <p class="mt-5 max-w-[62ch] text-lg leading-relaxed text-neutral-600 text-pretty dark:text-neutral-400">
+      Shell, JavaScript, Python, and TypeScript inside Nix —
+      <strong class="font-semibold text-neutral-900 dark:text-neutral-100">without escaping <code class="font-mono text-[0.9em] text-amber-600 dark:text-amber-400">${`{}`}</code></strong>.
+      Read from source, never evaluated. No preprocessor, no codegen; files stay valid <code class="font-mono text-[0.9em] text-amber-600 dark:text-amber-400">.nix</code>.
+    </p>
+
+    <div class="mt-8 flex flex-wrap items-center gap-3">
+      <a
+        href="#readme"
+        class="inline-flex items-center rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-neutral-950 transition-colors hover:bg-amber-400 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-500"
+      >
+        Get started
+      </a>
+      <a
+        href={`${base}api/`}
+        class="inline-flex items-center rounded-md border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+      >
+        API reference →
+      </a>
+    </div>
+
+    <div class="mt-10 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 font-mono text-sm leading-7 shadow-none dark:shadow-none">
+      <div class="flex items-center gap-1.5 border-b border-neutral-800 px-4 py-2">
+        <span class="size-2.5 rounded-full bg-neutral-700"></span>
+        <span class="size-2.5 rounded-full bg-neutral-700"></span>
+        <span class="size-2.5 rounded-full bg-neutral-700"></span>
+        <span class="ml-2 text-xs text-neutral-500">shell</span>
+      </div>
+      <pre class="overflow-x-auto px-4 py-3 text-neutral-100"><span class="select-none text-amber-400">$</span> nix run .#deploy
+<span class="select-none text-neutral-500">→</span> /nix/store/…/bin/deploy</pre>
+    </div>
+  </div>
+</section>

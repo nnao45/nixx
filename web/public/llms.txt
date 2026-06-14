@@ -1,0 +1,81 @@
+# nixx
+
+> Write real shell, JavaScript, Python, and TypeScript inside Nix — without escaping ${}.
+
+nixx is a Nix library. Script bodies are stored as Nix indented strings ('' … '') and read from SOURCE rather than evaluated, so a ${VAR} inside a body belongs to the target language (shell, JS, …), not to Nix. No preprocessor, no codegen; files stay valid .nix so nil/nixd never error. It ships store binaries (mkApps) and a just-style task runner (mkTasks).
+
+## Install
+
+Add nixx as a flake input:
+
+```nix
+inputs.nixx.url = "github:nnao45/nixx";
+```
+
+Then, in a per-system output where `pkgs` is in scope, build apps with a single `with`:
+
+```nix
+{ packages = with inputs.nixx.for pkgs; mkApps { } { hello = bash ''echo hi''; }; }
+```
+
+`with inputs.nixx.for pkgs;` does two things at once: it brings the constructors into scope (bash, uv, bun, mkApps, mkTasks, …) and it defers Nix's static undefined-variable check — which is exactly what lets a bare ${HOME} survive unescaped.
+
+## Usage
+
+Shippable binary (mkApps) — attr names become binary names:
+
+```nix
+with inputs.nixx.for pkgs;
+mkApps { packages = [ pkgs.rsync ]; } {        # packages is GLOBAL
+  deploy = bash ''
+    echo "deploying from ${HOME}"               # ${} is shell's — no ''${ } escape
+    rsync -a ./dist/ "$HOST:/srv/"
+  '';
+  report = uv ''
+    from rich import print
+    print("[green]ok[/]")
+  '' { requirements = [ "rich" ]; };            # per-block language options
+}
+# nix run .#deploy  →  /nix/store/.../bin/deploy
+```
+
+Task runner (mkTasks) — one bash process, so an export in an early task persists into later ones:
+
+```nix
+with inputs.nixx.for pkgs;
+let
+  tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs ]; } {
+    build = bash ''npm run build'';
+    test  = task { deps = [ "build" ]; } (bash ''npm test'');
+  };
+in {
+  packages.tasks    = tasks.runner;     # nix run .#tasks -- build
+  devShells.default = tasks.devShell;   # nix develop → tab-completed `tasks build`
+}
+```
+
+To splice an actual Nix value into a body, use a marker (native ${…} does NOT run in a source-read body):
+
+```nix
+mkTasks { vars = { port = 3000; name = "world"; }; } {
+  serve = bash ''serve --port @nix(port) --greeting @sh:q(name)'';
+}
+```
+
+## Caveats (gotchas)
+
+- **${} is the language's, not Nix's.** A bare ${HOME} in a body is shell — never write ''${HOME}. To inject a Nix value, use a marker: @nix(x) raw, @sh:q(x) bash-quoted, @py:q(x), @js:q(x). Native Nix ${...} interpolation does not run in a source-read body.
+- **packages is GLOBAL only.** Set it on `mkApps { packages = …; }` or `mkTasks { packages = …; }`. Passing `packages` per-block (`bash ''..'' { packages = …; }`) or per-task throws an error.
+- **The `with` defers undefined-variable checking.** A typo in never-evaluated code under `with inputs.nixx.for pkgs;` is not caught statically — keep the `with` scoped to the flake output that builds your tasks; evaluated code still errors clearly at runtime.
+- **Use `inputs.nixx.for pkgs`, not bare `nixx.for`** (unless you have bound `nixx = inputs.nixx`).
+- **mkApps ships 6 languages:** bash, uv (python), bun (ts), node, ts (tsx), deno. py / perl / ruby / lua have no binary builder — use them as task or script bodies (mkTasks / mkScripts), not mkApps.
+- **A few shell forms still need the '' prefix:** ${ARR[@]}, ${#VAR}, ${VAR%x}, ${VAR#x} are not valid Nix inside ${…} (rejected at parse time, before any source read), so write ''${ARR[@]}. Common forms (${VAR}, $VAR, $@, ${VAR:-default}, ${VAR/old/new}) need no prefix.
+- **Two PATHs in a dev shell.** Anything a task body calls goes in `mkTasks { packages }` — it resolves via `nix run .#tasks` AND at the `nix develop` prompt. `pkgs.mkShell { packages }` is only for tools you type at the prompt and no task calls; a mkShell-only package is absent from `nix run .#tasks`.
+- **Flakes only see git-tracked files.** New files must be `git add` (or `git add -N`) before `nix build` / `nix run` sees them.
+
+## Reference
+
+- Full API (every option of mkApps / mkTasks / task / mkScript, the vars markers, runtimeScope/for): https://nnao45.github.io/nixx/api/
+- Full docs as one text blob (README + API reference, verbatim): https://nnao45.github.io/nixx/llms-full.txt
+- Human-readable docs: https://nnao45.github.io/nixx/
+- Source: https://github.com/nnao45/nixx

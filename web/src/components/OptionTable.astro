@@ -1,0 +1,36 @@
+---
+export interface Option {
+  name: string;
+  type: string;
+  default?: string;
+  /** May contain inline HTML (e.g. <code>). */
+  description: string;
+}
+interface Props {
+  options: Option[];
+}
+const { options } = Astro.props;
+---
+
+<div class="my-5 overflow-x-auto">
+  <table class="w-full border-collapse text-[0.9rem]">
+    <thead>
+      <tr class="border-b border-neutral-300 dark:border-neutral-700">
+        <th scope="col" class="py-2 pe-4 text-start font-semibold whitespace-nowrap">option</th>
+        <th scope="col" class="py-2 pe-4 text-start font-semibold whitespace-nowrap">type</th>
+        <th scope="col" class="py-2 pe-4 text-start font-semibold whitespace-nowrap">default</th>
+        <th scope="col" class="py-2 text-start font-semibold">description</th>
+      </tr>
+    </thead>
+    <tbody>
+      {options.map((o) => (
+        <tr class="border-b border-neutral-200/70 dark:border-neutral-800/70">
+          <td class="py-2 pe-4 align-top font-mono font-medium whitespace-nowrap text-amber-600 dark:text-amber-400">{o.name}</td>
+          <td class="py-2 pe-4 align-top font-mono whitespace-nowrap text-neutral-500 dark:text-neutral-400">{o.type}</td>
+          <td class="py-2 pe-4 align-top font-mono whitespace-nowrap text-neutral-400 dark:text-neutral-500">{o.default ?? "—"}</td>
+          <td class="py-2 align-top text-neutral-600 dark:text-neutral-300" set:html={o.description} />
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</div>
