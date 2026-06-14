@@ -160,10 +160,13 @@ let
   apps  = mkApps { packages = [ pkgs.jq ]; } {
     envcheck = bash ''jq --version'';
   };
+  # nodejs is in mkTasks.packages because a TASK calls it — so it resolves both
+  # via `nix run .#tasks` and at the `nix develop` prompt (see "what goes where").
   tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs ]; } { build = bash ''echo ${OUT_DIR:-dist}''; };
 in {
   packages = apps // { default = tasks.runner; };
   devShells.default = tasks.extendShell (pkgs.mkShell {
+    # ripgrep is prompt-only — no task calls it, you just want it for grepping.
     packages  = [ pkgs.jq pkgs.ripgrep ];
     # even the hook is ${}-tax-free — it's a nixx body's .text:
     shellHook = (mkTasks { } { h = bash ''echo "hi ${USER}"''; }).tasks.h.text;
@@ -191,6 +194,26 @@ in {
   };
 }
 ```
+
+## `packages` — what goes where (mkTasks vs mkShell)
+There are two PATHs in play and one rule that keeps them from drifting. The
+runner is a wrapped store binary, so `mkTasks { packages }` is baked into the
+runner's own `runtimeInputs` — it resolves **identically** whether you
+`nix run .#tasks -- build` or run `tasks build` from a dev shell. nixx also
+re-exposes those same packages on the shell prompt (`devShell` / `extendShell`),
+so there's a **single source of truth**:
+
+| put it in… | for… | visible to |
+|---|---|---|
+| `mkTasks { packages = [...] }` | commands a **task body** calls (`jq`, `nodejs`, …) | `nix run .#tasks`, `tasks` in a dev shell, **and** the dev-shell prompt |
+| `pkgs.mkShell { packages = [...] }` (the shell you pass to `extendShell`) | tools you only type at the **prompt** and no task calls (`ripgrep`, …) | the dev-shell prompt only |
+
+The trap this avoids: if a task needs `jq`, put `jq` in **`mkTasks`**, never only
+in `mkShell`. A `mkShell`-only package is absent from `nix run .#tasks`, so the
+task would work under `nix develop` but break when run as a store binary — the
+exact asymmetry the runner's "same everywhere" guarantee exists to prevent.
+(`mkApps { packages }` is the same idea for a shipped binary: it's the only way
+to put a runtime dep on that binary's PATH — there is no shell to fall back on.)
 
 ## Task runner
 `mkTasks` is a `just`-style runner: one `tasks <name>` invocation is a **single

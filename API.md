@@ -151,10 +151,12 @@ in {
 `writers.mkTasks` returns:
 - **`runner`** — a `pkgs.writeShellApplication` derivation (shellcheck-gated).
   Global `packages` packages from opts are added to PATH for every task.
-- **`devShell`** — `pkgs.mkShell { packages = [runner]; }` with a `shellHook` that
-  registers bash tab-completion for all task names.
-- **`extendShell`** — `shell: pkgs.mkShell { inputsFrom = [shell]; packages = [runner]; }`.
-  Merges the runner (and its completion hook) into an existing shell.
+- **`devShell`** — `pkgs.mkShell { packages = [runner] ++ <opts.packages>; }` with a
+  `shellHook` that registers bash tab-completion for all task names. The global
+  `packages` are added alongside the runner so they're on the **prompt** PATH too
+  (the runner's own `runtimeInputs` are wrapped and otherwise invisible there).
+- **`extendShell`** — `shell: pkgs.mkShell { inputsFrom = [shell]; packages = [runner] ++ <opts.packages>; }`.
+  Merges the runner (its completion hook, and the global `packages`) into an existing shell.
 - **`tasks`** / **`meta`** — same as the pure `nixx.mkTasks` result.
 
 The pure `nixx.mkTasks` (no pkgs) is still available if you only need the runner
@@ -170,7 +172,7 @@ script text or a body's `.text`:
 | option | default | description |
 |---|---|---|
 | `name` | `"tasks"` | name embedded in runner comments |
-| `packages` | `[]` | packages whose `/bin` join `PATH` for **every** task in the runner |
+| `packages` | `[]` | packages whose `/bin` join `PATH` for **every** task in the runner — baked into the runner's `runtimeInputs` (so `nix run .#tasks` and `tasks` in a shell resolve them identically) **and** re-exposed on the `devShell`/`extendShell` prompt. Put anything a task body calls here, never only in `pkgs.mkShell` — see README "what goes where" |
 | `vars` | `{}` | Nix values interpolated via `@nix(…)` / `@sh:q(…)` markers |
 | `env` | `{}` | attrset exported as shell env vars in **every** task; per-task `env` overrides on conflict |
 | `defaultDeps` | `[]` | task names prepended to every task's deps; the default-dep tasks themselves are exempt |

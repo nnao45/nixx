@@ -31,10 +31,11 @@ rec {
   mkTasks = opts: taskDefs:
     let
       name = opts.name or "tasks";
+      pkgList = opts.packages or [ ];
       result = nixx.mkTasks (lib.removeAttrs opts [ "packages" ]) taskDefs;
       runner = pkgs.writeShellApplication {
         inherit name;
-        runtimeInputs = opts.packages or [ ];
+        runtimeInputs = pkgList;
         text = result.runner;
       };
       taskNames = lib.concatStringsSep " " (map (m: m.name) result.meta);
@@ -46,13 +47,20 @@ rec {
           complete -F _${name}_completions ${name}
         fi
       '';
+      # `runner`'s own runtimeInputs are wrapped — visible only INSIDE the runner
+      # process, never on the interactive shell prompt. So a task that calls `jq`
+      # works via `nix run .#tasks`, but typing `jq` at the `nix develop` prompt
+      # would not. We re-expose `pkgList` on the shell's PATH so the mental model
+      # collapses to a single source of truth: `mkTasks { packages }` covers tasks
+      # AND the prompt; `mkShell { packages }` is only for prompt-only extras that
+      # no task calls. (See README "what goes where".)
       devShell = pkgs.mkShell {
-        packages = [ runner ];
+        packages = [ runner ] ++ pkgList;
         shellHook = completionHook;
       };
       extendShell = shell: pkgs.mkShell {
         inputsFrom = [ shell ];
-        packages = [ runner ];
+        packages = [ runner ] ++ pkgList;
         shellHook = completionHook;
       };
     in
