@@ -52,9 +52,18 @@ still need the `''` — which the scanner replays back to a literal `$`:
 | form | zero prefix? | example |
 |---|---|---|
 | `${VAR}`, `$VAR`, `$@`, `$?` | ✅ | `echo ${HOME}` |
-| `${VAR:-default}` `${VAR:=d}` `${VAR:?e}` | ✅ | `echo ${EDITOR:-vi}` |
-| `${VAR/old/new}` | ✅ | `echo ${PATH//bin/BIN}` |
-| `${ARR[@]}` `${ARR[*]}` `${#VAR}` `${VAR%x}` `${VAR#x}` | ❌ use `''` | `for x in ''${ARR[@]}; do …` |
+| `${VAR:-d}` `${VAR:-}` `${VAR:=d}` `${VAR:?e}` `${VAR:+x}` | ✅ | `echo ${EDITOR:-vi}` |
+| `${VAR:off:len}` (substring) | ✅ | `echo ${name:0:3}` |
+| `${!ref}` (indirect) `${ARR[0]}` (numeric index) | ✅ | `echo ${!chosen}` |
+| `${VAR/old/new}` `${VAR//o/n}` (operands are identifier-only) | ✅ | `echo ${PATH//bin/BIN}` |
+| `${ARR[@]}` `${ARR[*]}` `${#VAR}` `${VAR%x}` `${VAR#x}` `${VAR^^}` `${VAR,,}` `${ARR[-1]}` | ❌ use `''` | `for x in ''${ARR[@]}; do …` |
+| `${VAR/o/n}` whose old/new carries `, ; # %` etc. | ❌ use `''` | `''${csv/,/;}` |
+
+Rule of thumb: anything lexically valid as a Nix expression inside `${…}`
+(the `:` / `:off:len` / `!` / `[n]` / identifier-only `/` families) survives
+**raw**; a token Nix can't lex (`@ * # % ^`, a negative index, or a symbol in
+a substitution operand) hits the *parse* wall first and needs `''`. **When in
+doubt, write `''${…}` — it is always correct**, in any of these forms.
 
 Still strictly better than a plain evaluated `''…''`, which needs `''` on
 *everything*. (Mechanism — lazy thunks, `unsafeGetAttrPos`, the literal-vs-
