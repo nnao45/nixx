@@ -321,10 +321,12 @@
             let
               inherit ((nixx.mkTasks { name = "nix-tasks"; } {
                 fmt = nixx.task { description = "Auto-format all .nix files"; } (nixx.sh ''
-                  nixpkgs-fmt flake.nix lib.nix writers.nix tests/lib-tests.nix
+                  nixpkgs-fmt flake.nix lib.nix writers.nix tests/lib-tests.nix \
+                    examples/multi-lang-e2e/flake.nix
                 '');
                 fmt-check = nixx.task { description = "Verify formatting (CI)"; } (nixx.sh ''
-                  nixpkgs-fmt --check flake.nix lib.nix writers.nix tests/lib-tests.nix
+                  nixpkgs-fmt --check flake.nix lib.nix writers.nix tests/lib-tests.nix \
+                    examples/multi-lang-e2e/flake.nix
                 '');
                 lint = nixx.task { description = "statix static analysis"; } (nixx.sh ''
                   statix check .
@@ -334,7 +336,8 @@
                   rc=0
                   # sema-primop-removed-prefix is noisy on inherit(builtins) patterns — skip it
                   for f in flake.nix lib.nix writers.nix tests/lib-tests.nix \
-                           examples/simple01/flake.nix examples/shell-hell-e2e/flake.nix; do
+                           examples/simple01/flake.nix examples/shell-hell-e2e/flake.nix \
+                           examples/multi-lang-e2e/flake.nix; do
                     diag=$(cat "$f" | nixf-tidy --variable-lookup \
                       | jq 'map(select(
                           .sname != "sema-primop-removed-prefix"
