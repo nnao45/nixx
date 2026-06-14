@@ -203,6 +203,17 @@
           '';
         };
 
+        # mkCheck: build the app AND run it inside pkgs.runCommand so the output
+        # is verified at `nix flake check` time (sandbox-safe runtimes only).
+        # uv / bun / deno are excluded: they need network at build or first run.
+        mkCheck = name: bin: pkgs.runCommand "lang-e2e-${name}" { } ''
+          result=$(${bin})
+          printf '%s\n' "$result"
+          printf '%s\n' "$result" | grep -q "PASS" \
+            || { echo "FAIL: ${name} output did not contain PASS"; exit 1; }
+          touch "$out"
+        '';
+
       in
       {
         packages = appPkgs // { default = e2eAll; };
@@ -211,6 +222,24 @@
           (name: pkg: { type = "app"; program = "${pkg}/bin/${name}"; })
           appPkgs // {
           default = { type = "app"; program = "${e2eAll}/bin/e2e-all"; };
+        };
+
+        # Sandbox-safe checks — run by `nix flake check` and the lang-e2e CI job.
+        # Each check builds the app derivation AND executes it, verifying "PASS"
+        # appears in the output.  No network is required for these five.
+        #
+        # uv-demo:   build only (ruff-gated); runtime calls `uv run` → needs network
+        # bun-demo:  excluded; `bun install` at build time needs network
+        # deno-demo: build only (copies .ts); runtime fetches jsr: → needs network
+        checks = {
+          tsx  = mkCheck "tsx"  "${appPkgs.tsx-demo}/bin/tsx-demo";
+          node = mkCheck "node" "${appPkgs.node-demo}/bin/node-demo";
+          perl = mkCheck "perl" "${appPkgs.perl-demo}/bin/perl-demo";
+          ruby = mkCheck "ruby" "${appPkgs.ruby-demo}/bin/ruby-demo";
+          lua  = mkCheck "lua"  "${appPkgs.lua-demo}/bin/lua-demo";
+          # build-only checks for network-dependent runtimes
+          uv-build   = appPkgs.uv-demo;
+          deno-build = appPkgs.deno-demo;
         };
 
         devShells.default = pkgs.mkShell {
