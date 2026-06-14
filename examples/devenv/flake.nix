@@ -35,13 +35,13 @@
 
         # `tasks <name>` inside `devenv shell`.
         tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs ]; } {
-          fmt = task { description = "Format (raw bash)"; } (bash ''
+          fmt = (bash ''
             echo "formatting ${PWD} as ${USER}"
-          '');
-          gen = task { description = "A node generator"; } (node ''
+          '') { description = "Format (raw bash)"; };
+          gen = (node ''
             const name = process.env.APP_NAME || "app";
             console.log(`scaffolding ${name} v${process.env.npm_package_version || "0.0.0"}`);
-          '');
+          '') { description = "A node generator"; };
         };
 
         # enterShell + a devenv script, authored with NO ''${ } tax.

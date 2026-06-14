@@ -27,14 +27,14 @@
         };
 
         tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs ]; } {
-          build = task { description = "Build (raw bash)"; } (bash ''
+          build = (bash ''
             out="${OUT_DIR:-dist}"
             echo "building into $out for ${USER}"
-          '');
-          check = task { description = "A node check"; } (node ''
+          '') { description = "Build (raw bash)"; };
+          check = (node ''
             const env = process.env.NODE_ENV || "dev";
             console.log(`checking in ${env} mode`);
-          '');
+          '') { description = "A node check"; };
         };
 
         # The shellHook body, authored with NO ''${ } tax. `.text` is the

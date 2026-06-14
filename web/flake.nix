@@ -24,18 +24,18 @@
           name = "web-tasks";
           packages = [ pkgs.nodejs ];
         } {
-          install = task { description = "npm install"; } (sh ''npm install'');
-          dev = task {
+          install = (sh ''npm install'') { description = "npm install"; };
+          dev = (sh ''npm run dev'') {
             description = "Astro dev server (http://localhost:4321/nixx/)";
-          } (sh ''npm run dev'');
-          build = task {
+          };
+          build = (sh ''npm run build'') {
             description = "Build the static site to ./dist";
             deps = [ "install" ];
-          } (sh ''npm run build'');
-          preview = task {
+          };
+          preview = (sh ''npm run preview'') {
             description = "Preview the built site";
             deps = [ "build" ];
-          } (sh ''npm run preview'');
+          };
           clean = sh ''rm -rf dist .astro'';
         };
       in
