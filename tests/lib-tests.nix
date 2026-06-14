@@ -324,12 +324,6 @@ let
     }
 
     {
-      name = "mkBlock: runtimeInputs defaults to []";
-      got = (lib.sh "echo\n").runtimeInputs;
-      expected = [ ];
-    }
-
-    {
       name = "mkBlock: env defaults to {}";
       got = (lib.sh "echo\n").env;
       expected = { };

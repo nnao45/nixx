@@ -289,7 +289,6 @@ let
       block = {
         __sh = true;
         __lang = lang;
-        runtimeInputs = [ ];
         env = { };
         cwd = null;
         description = null; # one-line summary shown by the runner's --list
