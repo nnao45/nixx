@@ -14,7 +14,7 @@ read from source, never escaped. No preprocessor, no codegen; files stay valid
     report = uv ''
       from rich import print
       print("[bold green]done[/]")
-    '' { deps = [ "rich" ]; };
+    '' { requirements = [ "rich" ]; };
     validate = bun ''
       const ok: boolean = true;
       console.log(`status: ${ok}`);       # TS template literal, verbatim
@@ -82,11 +82,11 @@ mkApps { } {
     curl -s https://api.example.com | jq .
   '' { runtimeInputs = [ pkgs.curl pkgs.jq ]; };
 
-  # python/uv — inline deps (PEP 723) or point at a project manifest
+  # python/uv — inline requirements (PEP 723) or point at a project manifest
   report = uv ''
     from rich import print
     print("[green]ok[/]")
-  '' { deps = [ "rich>=13" ]; };
+  '' { requirements = [ "rich>=13" ]; };
 
   # bun — compile to a self-contained binary
   check  = bun ''
@@ -119,7 +119,7 @@ let
     report = uv ''
       from rich import print
       print("[green]ok[/]")
-    '' { deps = [ "rich" ]; };
+    '' { requirements = [ "rich" ]; };
   };
   tasks = mkTasks { name = "tasks"; vars = apps; } {
     check = bash ''
@@ -198,7 +198,7 @@ into every later task. **Only env crosses task boundaries** — cwd and shell
 options are normalized at each task's entry (every bash task is `set -euo
 pipefail`; a dep's `cd` or `set +u` can't leak in), so tasks stay predictable.
 Tasks support `deps` (just-style prerequisites), `group`, per-task
-`requirements` / `cwd` / `env`.
+`runtimeInputs` / `cwd` / `env`.
 
 ```
 $ tasks --list

@@ -26,7 +26,7 @@ rec {
   #   devShells.default = tasks.extendShell (pkgs.mkShell { packages = [ nodejs ]; });
   #
   # `runner` is a pkgs.writeShellApplication derivation (shellcheck-gated).
-  # All per-task `requirements` packages are passed as runtimeInputs so
+  # All per-task `runtimeInputs` packages are passed as runtimeInputs so
   # shellcheck can resolve them.  The binary is named after `opts.name`
   # (defaults to "tasks").
   mkTasks = opts: taskDefs:
@@ -34,7 +34,7 @@ rec {
       name = opts.name or "tasks";
       result = nixx.mkTasks opts taskDefs;
       allRequirements = lib.concatMap
-        (t: t.requirements or [ ])
+        (t: t.runtimeInputs or [ ])
         (lib.attrValues result.tasks);
       runner = pkgs.writeShellApplication {
         inherit name;
@@ -72,7 +72,7 @@ rec {
   #
   #   mkApps { } {
   #     inspect = nixx.sh ''echo ${HOME}'';
-  #     report  = nixx.uv  ''from rich import print ...'' { deps = [ "rich" ]; };
+  #     report  = nixx.uv  ''from rich import print ...'' { requirements = [ "rich" ]; };
   #     fetch   = nixx.sh  ''curl ${URL}'' { runtimeInputs = [ pkgs.curl ]; };
   #   }
   #
@@ -90,7 +90,7 @@ rec {
         if lang == "bash" then
           writeBashApplication ((pickFrom appOpts (common ++ [ "strict" ])) // { inherit block; })
         else if lang == "python-uv" then
-          writeUvApplication ((pickFrom appOpts (common ++ [ "projectRoot" "frozen" "deps" "pythonReq" "lintIgnore" ])) // { inherit block; })
+          writeUvApplication ((pickFrom appOpts (common ++ [ "projectRoot" "frozen" "requirements" "pythonReq" "lintIgnore" ])) // { inherit block; })
         else if lang == "bun" then
           writeBunApplication ((pickFrom appOpts (common ++ [ "projectRoot" "compile" ])) // { inherit block; })
         else if lang == "node" then
@@ -155,7 +155,7 @@ rec {
   #                               is imported into the store, and `uv run
   #                               --frozen` resolves deterministically from the
   #                               lockfile (offline-friendly once cached).
-  #   * deps = [ "rich" ]      -> quick one-off: nixx writes a PEP 723 header.
+  #   * requirements = [ "rich" ] -> quick one-off: nixx writes a PEP 723 header.
   #                               Good for throwaway scripts, not for projects.
   #
   # ruff gates the build; uv & ruff are Nix-pinned via `pkgs`.
@@ -163,7 +163,7 @@ rec {
     { name
     , block                  # nixx.uv ''...''
     , projectRoot ? null     # dir containing pyproject.toml (+ uv.lock)
-    , deps ? [ ]             # fallback: inline PEP 723 deps
+    , requirements ? [ ]     # fallback: inline PEP 723 deps
     , pythonReq ? ">=3.11"
     , vars ? { }
     , lintIgnore ? [ ]
@@ -176,7 +176,7 @@ rec {
       script = nixx.mkScript
         {
           lang = "python-uv";
-          deps = if useProject then [ ] else deps;
+          requirements = if useProject then [ ] else requirements;
           inherit pythonReq vars;
           # in project mode we run via `uv run`, so a uv shebang is redundant;
           # keep a plain python marker the wrapper strips.

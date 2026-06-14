@@ -324,8 +324,8 @@ let
     }
 
     {
-      name = "mkBlock: requirements defaults to []";
-      got = (lib.sh "echo\n").requirements;
+      name = "mkBlock: runtimeInputs defaults to []";
+      got = (lib.sh "echo\n").runtimeInputs;
       expected = [ ];
     }
 

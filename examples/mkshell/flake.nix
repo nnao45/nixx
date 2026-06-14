@@ -31,7 +31,7 @@
             out="${OUT_DIR:-dist}"
             echo "building into $out for ${USER}"
           '');
-          check = task { description = "A node check"; requirements = [ pkgs.nodejs ]; } (node ''
+          check = task { description = "A node check"; runtimeInputs = [ pkgs.nodejs ]; } (node ''
             const env = process.env.NODE_ENV || "dev";
             console.log(`checking in ${env} mode`);
           '');
