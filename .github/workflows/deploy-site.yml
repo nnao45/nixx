@@ -41,7 +41,9 @@ jobs:
 
       - name: Lock web flake (recompute path narHash)
         working-directory: web
-        run: nix flake update nixx
+        run: |
+          rm -f flake.lock
+          nix flake lock
 
       - name: Build site (via nixx tasks)
         working-directory: web
