@@ -14,7 +14,7 @@ naturally, and `mkApps` dispatches to the right builder.
 |---|---|---|---|---|
 | `nixx.sh` / `nixx.bash` | bash | runtimeInputs | shellcheck | heavy |
 | `nixx.py`   | python | (Nix) | ruff | **none** |
-| `nixx.uv`   | python + uv inline deps | `deps = [...]` | ruff | **none** |
+| `nixx.uv`   | python + uv inline deps | `requirements = [...]` | ruff | **none** |
 | `nixx.ts` / `nixx.bun` | typescript via bun | auto (imports) | `bun build` (+compile) | light |
 | `nixx.node` | node | Nix node_modules | `node --check` | heavy |
 | `nixx.deno` | deno | `npm:`/`jsr:` inline | deno lint | light |
@@ -54,7 +54,7 @@ mkApps { } {
   report = uv ''
     from rich import print
     print("[bold green]done[/]")
-  '' { deps = [ "rich>=13" ]; };
+  '' { requirements = [ "rich>=13" ]; };
 
   check = bun ''
     interface R { ok: boolean }
@@ -95,13 +95,13 @@ mkApps { } {
 # so resolution is deterministic from the lockfile.
 ```
 
-`deps = [ "rich" ]` still exists as a **quick one-off** path (nixx writes a
+`requirements = [ "rich" ]` still exists as a **quick one-off** path (nixx writes a
 PEP 723 header) — handy for throwaway scripts, but for a project use
 `projectRoot`. Same for bun: `projectRoot = ./.;` uses the project's
 `package.json` + lockfile.
 
 ## `mkScript` / `mkScripts`
-- `nixx.mkScript { lang?, vars?, shebang?, strict?, runtimeInputs?, deps?, pythonReq? } block`
+- `nixx.mkScript { lang?, vars?, shebang?, strict?, runtimeInputs?, requirements?, pythonReq? } block`
   → just the script string (with shebang). A standalone block is *evaluated*, so
   a bare `${VAR}` needs `''${VAR}` (or build it through `mkScripts`, which
   source-reads).
@@ -129,7 +129,7 @@ let
       description  = "Deploy production";
       group        = "release";
       env          = { DEPLOY_ENV = "prod"; };  # merged with global; per-task wins on conflict
-      requirements = [ pkgs.awscli2 ];
+      runtimeInputs = [ pkgs.awscli2 ];
       cwd          = ./infra;
     } (nixx.sh ''aws s3 sync ...'');
     check  = nixx.task { deps = [ "build" ]; } (nixx.sh ''
@@ -146,7 +146,7 @@ in {
 
 `writers.mkTasks` returns:
 - **`runner`** — a `pkgs.writeShellApplication` derivation (shellcheck-gated).
-  All per-task `requirements` packages are passed as `runtimeInputs`.
+  All per-task `runtimeInputs` packages are added to PATH.
 - **`devShell`** — `pkgs.mkShell { packages = [runner]; }` with a `shellHook` that
   registers bash tab-completion for all task names.
 - **`extendShell`** — `shell: pkgs.mkShell { inputsFrom = [shell]; packages = [runner]; }`.
@@ -177,7 +177,7 @@ script text or a body's `.text`:
 | `description` | `null` | one-line summary shown by `--list`; also on `.tasks.<name>.description` and `.meta` |
 | `group` | `null` | groups tasks under a header in `--list` output |
 | `deps` | `[]` | prerequisite task names run (once each) before this body |
-| `requirements` | `[]` | packages whose `/bin` join `PATH` for this task |
+| `runtimeInputs` | `[]` | packages whose `/bin` join `PATH` for this task |
 | `env` | `{}` | attrset of shell env vars exported before the body; merged with global `mkTasks env`, this wins on conflict |
 | `cwd` | `null` | working directory; the runner `cd`s here after first resetting to the invocation dir (a dep's `cwd` never leaks in) |
 

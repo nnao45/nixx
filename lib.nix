@@ -289,7 +289,7 @@ let
       block = {
         __sh = true;
         __lang = lang;
-        requirements = [ ];
+        runtimeInputs = [ ];
         env = { };
         cwd = null;
         description = null; # one-line summary shown by the runner's --list
@@ -328,9 +328,9 @@ let
   task = opts: blk:
     assert (blk.__sh or false) || throw "nixx.task: second arg must be a nixx block (e.g. nixx.sh ''...'')";
     assert (!(opts ? needs)) || throw
-      "nixx.task: `needs` was renamed to `deps` (prerequisite tasks). For PATH packages use `requirements`.";
+      "nixx.task: `needs` was renamed to `deps` (prerequisite tasks). For PATH packages use `runtimeInputs`.";
     blk // {
-      requirements = opts.requirements or [ ]; # packages whose /bin join PATH
+      runtimeInputs = opts.runtimeInputs or [ ]; # packages whose /bin join PATH
       env = opts.env or { };
       cwd = opts.cwd or null;
       # NOTE: there is no per-task `strict` — the runner re-asserts
@@ -412,7 +412,7 @@ let
           t = full.${n};
           lang = t.__lang or "bash";
           isBash = lang == "bash" || lang == "sh";
-          reqs = t.requirements or [ ];
+          reqs = t.runtimeInputs or [ ];
           pathLine = if reqs == [ ] then "" else
           "  export PATH=" + shq (concatStringsSep ":" (map (d: "${toString d}/bin") reqs)) + ":\"$PATH\"\n";
           envLines = concatStringsSep ""
@@ -599,28 +599,28 @@ let
     typescript = { shebang = "#!/usr/bin/env tsx"; strict = false; pathStyle = "none"; };
   };
 
-  # PEP 723 inline metadata block for uv. deps is a list of strings like
+  # PEP 723 inline metadata block for uv. requirements is a list of strings like
   # [ "requests" "rich>=13" ]; pythonReq is an optional ">=3.11" constraint.
-  pep723 = { deps ? [ ], pythonReq ? null }:
-    if deps == [ ] && pythonReq == null then [ ] else
+  pep723 = { requirements ? [ ], pythonReq ? null }:
+    if requirements == [ ] && pythonReq == null then [ ] else
     [ "# /// script" ]
     ++ (if pythonReq == null then [ ] else [ ("# requires-python = " + "\"" + pythonReq + "\"") ])
-    ++ [ ("# dependencies = [" + concatStringsSep ", " (map (d: "\"" + d + "\"") deps) + "]") ]
+    ++ [ ("# dependencies = [" + concatStringsSep ", " (map (d: "\"" + d + "\"") requirements) + "]") ]
     ++ [ "# ///" ];
 
   # mkScript: compile ONE block to a standalone executable script.
   # `lang` picks a profile (shebang + strict default). An explicit `shebang`
   # still overrides. For bash, runtimeInputs are injected as PATH export; for
-  # python-uv, `deps`/`pythonReq` become a PEP 723 header that uv resolves.
+  # python-uv, `requirements`/`pythonReq` become a PEP 723 header that uv resolves.
   #   nixx.mkScript { lang = "python"; vars = { port = 3000; }; } (nixx.sh '' ... '')
-  #   nixx.mkScript { lang = "python-uv"; deps = [ "requests" ]; } (nixx.sh '' ... '')
+  #   nixx.mkScript { lang = "python-uv"; requirements = [ "requests" ]; } (nixx.sh '' ... '')
   mkScript =
     { lang ? null
     , vars ? { }
     , shebang ? null
     , strict ? null
     , runtimeInputs ? [ ]
-    , deps ? [ ]
+    , requirements ? [ ]
     , pythonReq ? null
     }: blk:
     let
@@ -645,7 +645,7 @@ let
         if runtimeInputs == [ ] || prof.pathStyle != "bash" then [ ] else
         [ ("export PATH=" + shq (concatStringsSep ":" (map (d: "${toString d}/bin") runtimeInputs)) + ":\"$PATH\"") ];
       # uv-only preamble: PEP 723 inline metadata (must come right after shebang)
-      uvHeader = if prof.pathStyle == "uv" then pep723 { inherit deps pythonReq; } else [ ];
+      uvHeader = if prof.pathStyle == "uv" then pep723 { inherit requirements pythonReq; } else [ ];
       bodyLines = uvHeader ++ strictLine ++ pathLine ++ rest;
     in
     head' + "\n" + concatStringsSep "\n" bodyLines

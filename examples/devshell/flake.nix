@@ -35,14 +35,14 @@
           '');
 
           # node — a JS template literal `${PORT}` survives verbatim too.
-          serve = task { description = "Print the dev URL"; requirements = [ pkgs.nodejs ]; } (node ''
+          serve = task { description = "Print the dev URL"; runtimeInputs = [ pkgs.nodejs ]; } (node ''
             const PORT = process.env.PORT || 3000;
             const scheme = "ht" + "tp:";
             console.log(`serving on ${scheme}//localhost:${PORT}`);
           '');
 
           # perl — same trick: ${name} is perl's, not Nix's.
-          hello = task { description = "A perl hello"; requirements = [ pkgs.perl ]; } (perl ''
+          hello = task { description = "A perl hello"; runtimeInputs = [ pkgs.perl ]; } (perl ''
             my $name = $ENV{USER} || "stranger";
             print "perl waves at ${name}\n";
           '');

@@ -56,7 +56,7 @@
                 '');
               }).runner;
 
-            # ── e2e-env: env vars, requirements (PATH), cwd ──────────────────────
+            # ── e2e-env: env vars, runtimeInputs (PATH), cwd ────────────────────
             e2eEnv = mkE2e "e2e-env"
               (n.mkTasks { name = "e2e-env"; } {
                 env_test = n.task
@@ -72,11 +72,11 @@
                     echo "PASS: env variables"
                   '');
 
-                path_test = n.task { requirements = [ pkgs.jq ]; } (n.sh ''
+                path_test = n.task { runtimeInputs = [ pkgs.jq ]; } (n.sh ''
                   command -v jq >/dev/null || { echo "FAIL: jq not in PATH"; exit 1; }
                   echo '{"ok":true}' | jq -e .ok >/dev/null \
                     || { echo "FAIL: jq not functional"; exit 1; }
-                  echo "PASS: requirements/PATH"
+                  echo "PASS: runtimeInputs/PATH"
                 '');
 
                 cwd_test = n.task { cwd = "/tmp"; } (n.sh ''
