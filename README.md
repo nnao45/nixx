@@ -37,7 +37,7 @@ Every body passed as an attr value to `mkApps`, `mkTasks`, or `mkScripts` is
 read **from source** instead of evaluated, so a `${VAR}` in the `${}` family —
 shell `${HOME}`, a JS template `` `${x}` ``, a perl `${name}` — survives
 verbatim with **no `''` prefix**. The one line of ceremony is the `with`
-(`inputs.nixx.for pkgs`, or just `nixx.runtimeScope` for the deferral alone): any
+(`inputs.nixx.for pkgs` — the one canonical entry point): any
 `with` makes the scope dynamic, which defers Nix's static undefined-variable
 check to a runtime that never arrives (the body is never forced). To splice in
 an actual **Nix** value, use the `@nix(x)` / `@sh:q(x)` markers — native Nix
@@ -64,9 +64,10 @@ programmatic guard — in [API.md](./API.md).)
 `with` on the flake output that builds your tasks; evaluated code still errors
 clearly at runtime.
 
-## Per-app options
-Call a block like a function with an attrset of options — no `app { } (...)`
-wrapper:
+## Per-block options
+Call a block like a function with an attrset of options. This **one idiom**
+covers both `mkApps` (language opts like `compile`) and `mkTasks` (task opts
+like `deps` / `env` / `cwd`) — there is no separate `app` / `task` wrapper:
 
 ```nix
 with inputs.nixx.for pkgs;
@@ -98,9 +99,9 @@ throws, on purpose.
 | `compile` | per-block (bun) | `bun --compile` → standalone binary |
 | `projectRoot` | per-block (uv/bun) | deps from `./pyproject.toml` / `package.json` |
 
-`app { ... } block` still works as a backwards-compatible helper. Everything
-else (full option matrix, `mkScript(s)`, `vars` markers) is in
-**[API.md](./API.md)**.
+The same call form attaches task options in `mkTasks`
+(`bash ''…'' { deps = [ … ]; env = { … }; cwd = ./d; }`). Everything else (full
+option matrix, `mkScript(s)`, `vars` markers) is in **[API.md](./API.md)**.
 
 ## Apps and shells
 `mkApps` builds store binaries; `mkTasks` builds a just-style runner. They
@@ -185,7 +186,7 @@ $ tasks build      # or: nix run .#tasks -- build
 ```
 
 `packages` is global on `mkTasks` — same rule as `mkApps` (see
-[Per-app options](#per-app-options)). **One trap:** if a task calls a tool, put
+[Per-block options](#per-block-options)). **One trap:** if a task calls a tool, put
 it in `mkTasks { packages }`, never only in `mkShell` — a `mkShell`-only package
 is absent from `nix run .#tasks`, so the task works under `nix develop` but
 breaks as a shipped binary. Full options and `env`/`deps` semantics in

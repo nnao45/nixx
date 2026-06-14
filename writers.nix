@@ -80,10 +80,10 @@ rec {
   #     fetch   = nixx.sh  ''curl ${URL}'';
   #   }
   #
-  # Per-app options are attached by calling the block: bash ''body'' { opts }.
-  # nixx.app { } (block) still works as a backwards-compatible helper.
-  # Global options in the first attrset apply to every app. Options that a
-  # language builder doesn't accept are dropped first so it won't error.
+  # Per-app options are attached by calling the block: bash ''body'' { opts } —
+  # the same idiom mkTasks uses. Global options in the first attrset apply to
+  # every app. Options that a language builder doesn't accept are dropped first
+  # so it won't error.
   mkApps = opts: apps:
     let
       common = [ "name" "vars" "packages" ];
@@ -117,44 +117,12 @@ rec {
     in
     lib.mapAttrs
       (name: block:
-        let appOpts = globalOpts // (block.__appOptions or { }) // { inherit name; };
+        # per-block opts are merged top-level by the block's __functor, so the
+        # builder reads them straight off `block` (pickFrom selects the keys it
+        # accepts); globals come from the first attrset, name from the attr.
+        let appOpts = globalOpts // block // { inherit name; };
         in dispatch appOpts block)
       result.tasks;
-
-  # mkApp — singleton helper plus legacy direct-block compatibility.
-  #
-  # Preferred, source-read form:
-  #   (mkApp { } { inspect = nixx.sh ''echo ${HOME}''; })
-  #
-  # Legacy direct-block form is still accepted, but it is evaluated by Nix
-  # before nixx sees it, so shell/JS `${...}` needs normal Nix escaping there:
-  #   mkApp { name = "inspect"; } (nixx.sh ''echo ''${HOME}'')
-  mkApp = opts: value:
-    if value.__sh or false then
-      let
-        legacyName = opts.name or (throw "nixx.mkApp: direct-block form requires `name`");
-        apps = mkApps (lib.removeAttrs opts [ "name" ]) {
-          ${legacyName} = value;
-        };
-      in
-      apps.${legacyName}
-    else
-      let
-        names = lib.attrNames value;
-        attrName =
-          if names == [ ] then
-            throw "nixx.mkApp: expected a singleton attrset, got an empty attrset"
-          else if lib.length names != 1 then
-            throw "nixx.mkApp: expected a singleton attrset; use mkApps for multiple binaries"
-          else
-            lib.head names;
-        apps = mkApps opts value;
-      in
-      apps.${attrName};
-
-  # runApplication — deprecated alias of mkApp (the "run" was a misnomer: it
-  # builds a runnable, it doesn't run anything). Kept for back-compat.
-  runApplication = mkApp;
 
   # writeUvApplication — Python via uv, built to /nix/store/<hash>/bin/<name>.
   #
@@ -459,8 +427,9 @@ rec {
     }:
     let
       script = nixx.mkScript { lang = "perl"; inherit vars; } block;
-      perlInterp = if perlPackages == [ ] then pkgs.perl
-                   else pkgs.perl.withPackages (_: perlPackages);
+      perlInterp =
+        if perlPackages == [ ] then pkgs.perl
+        else pkgs.perl.withPackages (_: perlPackages);
       binPath = lib.makeBinPath ([ perlInterp ] ++ packages);
     in
     stdenv.mkDerivation {
@@ -509,8 +478,9 @@ rec {
     }:
     let
       script = nixx.mkScript { lang = "ruby"; inherit vars; } block;
-      rubyInterp = if rubyGems == [ ] then pkgs.ruby
-                   else pkgs.ruby.withPackages (_: rubyGems);
+      rubyInterp =
+        if rubyGems == [ ] then pkgs.ruby
+        else pkgs.ruby.withPackages (_: rubyGems);
       binPath = lib.makeBinPath ([ rubyInterp ] ++ packages);
     in
     stdenv.mkDerivation {
@@ -560,8 +530,9 @@ rec {
     }:
     let
       script = nixx.mkScript { lang = "lua"; inherit vars; } block;
-      luaInterp = if luaPackages == [ ] then pkgs.lua
-                  else pkgs.lua.withPackages (_: luaPackages);
+      luaInterp =
+        if luaPackages == [ ] then pkgs.lua
+        else pkgs.lua.withPackages (_: luaPackages);
       binPath = lib.makeBinPath ([ luaInterp ] ++ packages);
     in
     stdenv.mkDerivation {

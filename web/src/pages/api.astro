@@ -106,10 +106,8 @@ const mkScriptsOpts = [
 ];
 
 const varsMarkers = [
-  { name: "@nix(name)", type: "raw", default: "", description: "<code>toString</code> of the Nix value, spliced verbatim." },
-  { name: "@nix:q(name) · @sh:q(name)", type: "bash", default: "", description: "POSIX single-quoted shell literal (<code>shq</code>)." },
-  { name: "@py:q(name)", type: "python", default: "", description: "Double-quoted Python string literal." },
-  { name: "@js:q(name)", type: "js · ts", default: "", description: "JSON-style double-quoted JS/TS literal." },
+  { name: "@nix(name)", type: "raw", default: "", description: "<code>toString</code> of the Nix value, spliced verbatim — for paths / derivations / numbers." },
+  { name: "@sh:q(name)", type: "bash", default: "", description: "POSIX single-quoted shell literal (<code>shq</code>) — for arbitrary strings. Pass values into a non-bash body via <code>env</code> instead." },
   { name: "(a path value)", type: "store", default: "", description: "Auto-imported into the store (reproducible; exec bit preserved)." },
 ];
 
@@ -118,15 +116,15 @@ const toc = [
   ["block-options", "Block options"],
   ["mkapps", "mkApps"],
   ["mktasks", "mkTasks (runner)"],
-  ["task", "nixx.task"],
+  ["task", "Per-task options"],
   ["mktasks-pure", "nixx.mkTasks (pure)"],
   ["mkscript", "mkScript / mkScripts"],
   ["vars", "Vars markers"],
-  ["scope", "runtimeScope · for"],
+  ["scope", "for pkgs"],
 ];
 ---
 
-<Base title="nixx — API reference" description="Exhaustive nixx API reference: every constructor, option, and return value for mkApps, mkTasks, task, mkScript, and the vars markers.">
+<Base title="nixx — API reference" description="Exhaustive nixx API reference: every constructor, option, and return value for mkApps, mkTasks, per-block options, mkScript, and the vars markers.">
   <div class="mx-auto w-full max-w-5xl px-4 py-12 sm:px-6 sm:py-16">
     <p class="font-mono text-sm text-amber-500">// reference</p>
     <h1 class="mt-3 font-mono text-3xl font-semibold tracking-tight text-balance">API reference</h1>
@@ -249,11 +247,9 @@ const toc = [
 
         <!-- task -->
         <section id="task" class="mt-12 scroll-mt-20">
-          <h2 class="font-mono text-xl font-semibold tracking-tight">
-            <span class="text-neutral-500">lib ·</span> task
-          </h2>
-          <p class="mt-2 font-mono text-sm text-neutral-500 dark:text-neutral-400">task &#123; … &#125; (nixx.sh ''…'')</p>
-          <p class="mt-2 text-neutral-600 dark:text-neutral-400">Wraps a block as a runner task. Asserts: <code class="font-mono text-amber-600 dark:text-amber-400">needs</code> throws (renamed to <code class="font-mono text-amber-600 dark:text-amber-400">deps</code>); per-task <code class="font-mono text-amber-600 dark:text-amber-400">packages</code> throws (use the global). Positional args reach bash bodies as <code class="font-mono text-amber-600 dark:text-amber-400">$@</code>; non-bash bodies get them via <code class="font-mono text-amber-600 dark:text-amber-400">env</code>.</p>
+          <h2 class="font-mono text-xl font-semibold tracking-tight">Per-task options</h2>
+          <p class="mt-2 font-mono text-sm text-neutral-500 dark:text-neutral-400">sh ''…'' &#123; deps = [ … ]; env = &#123; … &#125;; cwd = ./d; &#125;</p>
+          <p class="mt-2 text-neutral-600 dark:text-neutral-400">Task options ride on the block itself — the <strong>same</strong> <code class="font-mono text-amber-600 dark:text-amber-400">block ''…'' &#123; … &#125;</code> call that attaches language options in <code class="font-mono text-amber-600 dark:text-amber-400">mkApps</code>. There is no separate <code class="font-mono text-amber-600 dark:text-amber-400">task</code> wrapper. Per-task <code class="font-mono text-amber-600 dark:text-amber-400">packages</code> throws (use the global). Positional args reach bash bodies as <code class="font-mono text-amber-600 dark:text-amber-400">$@</code>; non-bash bodies get them via <code class="font-mono text-amber-600 dark:text-amber-400">env</code>.</p>
           <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">options</h3>
           <OptionTable options={taskOpts} />
         </section>
@@ -294,10 +290,9 @@ const toc = [
 
         <!-- scope -->
         <section id="scope" class="mt-12 scroll-mt-20">
-          <h2 class="font-mono text-xl font-semibold tracking-tight">runtimeScope · for</h2>
+          <h2 class="font-mono text-xl font-semibold tracking-tight">for pkgs</h2>
           <OptionTable options={[
-            { name: "runtimeScope", type: "{} (empty)", description: "The attrset for <code>with nixx.runtimeScope;</code> — any <code>with</code> defers Nix's static undefined-variable check, so a bare <code>${`{VAR}`}</code> survives the source-read." },
-            { name: "inputs.nixx.for pkgs", type: "attrset", description: "<code>lib</code> + <code>writers(pkgs)</code> + <code>pkgs</code> in one set, for <code>with inputs.nixx.for pkgs;</code>. The single line of ceremony that un-prefixes the constructors <em>and</em> defers the check." },
+            { name: "inputs.nixx.for pkgs", type: "attrset", description: "<code>lib</code> + <code>writers(pkgs)</code> + <code>pkgs</code> in one set, for <code>with inputs.nixx.for pkgs;</code> — the one canonical entry point. The single line of ceremony that un-prefixes the constructors <em>and</em> defers Nix's static undefined-variable check (any <code>with</code> makes the scope dynamic), so a bare <code>${`{VAR}`}</code> survives the source-read." },
           ]} />
         </section>
 

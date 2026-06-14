@@ -27,8 +27,9 @@
       #
       # The single `with` does double duty: it un-prefixes the constructors AND
       # defers Nix's static undefined-variable check (any `with` makes the scope
-      # dynamic), so a bare ${VAR} survives with no separate `runtimeScope`. The
-      # writers' `mkTasks` (derivation + devShell + .tasks) shadows lib's.
+      # dynamic), so a bare ${VAR} survives — this is the one canonical entry
+      # point. The writers' `mkTasks` (derivation + devShell + .tasks) shadows
+      # lib's.
       for = forPkgs;
 
       overlays.default = final: prev: {
@@ -59,62 +60,60 @@
         e2eDeps = mkE2e "e2e-deps"
           (nixx.mkTasks { name = "e2e-deps"; } {
             step1 = nixx.sh ''export LINEAR="ran"'';
-            step2 = nixx.task { deps = [ "step1" ]; } (nixx.sh ''
+            step2 = (nixx.sh ''
               test "''${LINEAR:-}" = "ran" \
                 || { echo "FAIL: step1 did not run before step2"; exit 1; }
               export LINEAR="step2"
-            '');
-            step3 = nixx.task { deps = [ "step2" ]; } (nixx.sh ''
+            '') { deps = [ "step1" ]; };
+            step3 = (nixx.sh ''
               test "$LINEAR" = "step2" \
                 || { echo "FAIL: step2 did not run before step3"; exit 1; }
               echo "PASS: linear chain"
-            '');
+            '') { deps = [ "step2" ]; };
             dia_a = nixx.sh ''
               export DIA_COUNT=''${DIA_COUNT:-0}
               DIA_COUNT=$((DIA_COUNT + 1))
               export DIA_COUNT
             '';
-            dia_b = nixx.task { deps = [ "dia_a" ]; } (nixx.sh ''export DIA_B=1'');
-            dia_c = nixx.task { deps = [ "dia_a" ]; } (nixx.sh ''export DIA_C=1'');
-            dia_d = nixx.task { deps = [ "dia_b" "dia_c" ]; } (nixx.sh ''
+            dia_b = (nixx.sh ''export DIA_B=1'') { deps = [ "dia_a" ]; };
+            dia_c = (nixx.sh ''export DIA_C=1'') { deps = [ "dia_a" ]; };
+            dia_d = (nixx.sh ''
               test "$DIA_COUNT" -eq 1 \
                 || { echo "FAIL: dia_a ran $DIA_COUNT times (expected 1)"; exit 1; }
               test "''${DIA_B:-}" = "1" || { echo "FAIL: dia_b missing"; exit 1; }
               test "''${DIA_C:-}" = "1" || { echo "FAIL: dia_c missing"; exit 1; }
               echo "PASS: diamond deps"
-            '');
-            all = nixx.task { deps = [ "step3" "dia_d" ]; } (nixx.sh ''
+            '') { deps = [ "dia_b" "dia_c" ]; };
+            all = (nixx.sh ''
               echo "=== e2e-deps: ALL PASSED ==="
-            '');
+            '') { deps = [ "step3" "dia_d" ]; };
           }).runner;
 
         e2eEnv = pkgs.writeShellApplication {
           name = "e2e-env";
           runtimeInputs = [ pkgs.jq ];
           text = (nixx.mkTasks { name = "e2e-env"; } {
-            env_test = nixx.task
-              {
-                env = { FOO = "hello world"; BAR = "it's a test"; };
-              }
-              (nixx.sh ''
-                test "$FOO" = "hello world" || { echo "FAIL: FOO=$FOO"; exit 1; }
-                test "$BAR" = "it's a test"  || { echo "FAIL: BAR=$BAR"; exit 1; }
-                echo "PASS: env variables"
-              '');
+            env_test = (nixx.sh ''
+              test "$FOO" = "hello world" || { echo "FAIL: FOO=$FOO"; exit 1; }
+              test "$BAR" = "it's a test"  || { echo "FAIL: BAR=$BAR"; exit 1; }
+              echo "PASS: env variables"
+            '') {
+              env = { FOO = "hello world"; BAR = "it's a test"; };
+            };
             path_test = nixx.sh ''
               command -v jq >/dev/null || { echo "FAIL: jq not in PATH"; exit 1; }
               echo '{"ok":true}' | jq -e .ok >/dev/null \
                 || { echo "FAIL: jq not functional"; exit 1; }
               echo "PASS: global packages/PATH"
             '';
-            cwd_test = nixx.task { cwd = "/tmp"; } (nixx.sh ''
+            cwd_test = (nixx.sh ''
               test "$(pwd)" = "/tmp" \
                 || { echo "FAIL: cwd=$(pwd) expected=/tmp"; exit 1; }
               echo "PASS: cwd"
-            '');
-            all = nixx.task { deps = [ "env_test" "path_test" "cwd_test" ]; } (nixx.sh ''
+            '') { cwd = "/tmp"; };
+            all = (nixx.sh ''
               echo "=== e2e-env: ALL PASSED ==="
-            '');
+            '') { deps = [ "env_test" "path_test" "cwd_test" ]; };
           }).runner;
         };
 
@@ -125,19 +124,19 @@
         e2eStrict = mkE2e "e2e-strict"
           (nixx.mkTasks { name = "e2e-strict"; } {
             loosen = nixx.sh ''set +u'';
-            reasserted = nixx.task { deps = [ "loosen" ]; } (nixx.sh ''
+            reasserted = (nixx.sh ''
               case "$-" in *u*) ;; *) echo "FAIL: -u leaked off from a prior task"; exit 1 ;; esac
               case "$-" in *e*) ;; *) echo "FAIL: -e leaked off from a prior task"; exit 1 ;; esac
               echo "PASS: shell options re-asserted per task (no leak)"
-            '');
-            chdir = nixx.task { cwd = "/"; } (nixx.sh ''test "$PWD" = "/"'');
-            cwd_reset = nixx.task { deps = [ "chdir" ]; } (nixx.sh ''
+            '') { deps = [ "loosen" ]; };
+            chdir = (nixx.sh ''test "$PWD" = "/"'') { cwd = "/"; };
+            cwd_reset = (nixx.sh ''
               test "$PWD" != "/" || { echo "FAIL: dep's cd / leaked into this task"; exit 1; }
               echo "PASS: cwd reset to invocation dir (no leak)"
-            '');
-            all = nixx.task { deps = [ "reasserted" "cwd_reset" ]; } (nixx.sh ''
+            '') { deps = [ "chdir" ]; };
+            all = (nixx.sh ''
               echo "=== e2e-strict: ALL PASSED ==="
-            '');
+            '') { deps = [ "reasserted" "cwd_reset" ]; };
           }).runner;
 
         e2eCombo = mkE2e "e2e-combo"
@@ -146,16 +145,16 @@
               export COMBO_VAR="from_parent"
               export COMBO_EXTRA="also_visible"
             '';
-            getter = nixx.task { deps = [ "setter" ]; } (nixx.sh ''
+            getter = (nixx.sh ''
               test "$COMBO_VAR" = "from_parent" \
                 || { echo "FAIL: COMBO_VAR=$COMBO_VAR"; exit 1; }
               test "$COMBO_EXTRA" = "also_visible" \
                 || { echo "FAIL: COMBO_EXTRA=$COMBO_EXTRA"; exit 1; }
               echo "PASS: parent export propagates to child"
-            '');
-            all = nixx.task { deps = [ "getter" ]; } (nixx.sh ''
+            '') { deps = [ "setter" ]; };
+            all = (nixx.sh ''
               echo "=== e2e-combo: ALL PASSED ==="
-            '');
+            '') { deps = [ "getter" ]; };
           }).runner;
 
         e2eEdge = mkE2e "e2e-edge"
@@ -166,26 +165,24 @@
             }
             {
               empty = nixx.sh '''';
-              special_chars = nixx.task
-                {
-                  env = {
-                    WITH_SPACES = "hello world";
-                    WITH_QUOTE = "it's a test";
-                    WITH_BACKSLASH = "path/to\\file";
-                    WITH_DOLLAR = "dollar dollar";
-                  };
-                }
-                (nixx.sh ''
-                  test "$WITH_SPACES" = "hello world" \
-                    || { echo "FAIL: WITH_SPACES=$WITH_SPACES"; exit 1; }
-                  test "$WITH_QUOTE" = "it's a test" \
-                    || { echo "FAIL: WITH_QUOTE=$WITH_QUOTE"; exit 1; }
-                  test "$WITH_BACKSLASH" = 'path/to\file' \
-                    || { echo "FAIL: WITH_BACKSLASH=$WITH_BACKSLASH"; exit 1; }
-                  test "$WITH_DOLLAR" = "dollar dollar" \
-                    || { echo "FAIL: WITH_DOLLAR=$WITH_DOLLAR"; exit 1; }
-                  echo "PASS: special chars in env"
-                '');
+              special_chars = (nixx.sh ''
+                test "$WITH_SPACES" = "hello world" \
+                  || { echo "FAIL: WITH_SPACES=$WITH_SPACES"; exit 1; }
+                test "$WITH_QUOTE" = "it's a test" \
+                  || { echo "FAIL: WITH_QUOTE=$WITH_QUOTE"; exit 1; }
+                test "$WITH_BACKSLASH" = 'path/to\file' \
+                  || { echo "FAIL: WITH_BACKSLASH=$WITH_BACKSLASH"; exit 1; }
+                test "$WITH_DOLLAR" = "dollar dollar" \
+                  || { echo "FAIL: WITH_DOLLAR=$WITH_DOLLAR"; exit 1; }
+                echo "PASS: special chars in env"
+              '') {
+                env = {
+                  WITH_SPACES = "hello world";
+                  WITH_QUOTE = "it's a test";
+                  WITH_BACKSLASH = "path/to\\file";
+                  WITH_DOLLAR = "dollar dollar";
+                };
+              };
               setup_a = nixx.sh ''export SETUP_A=1'';
               setup_b = nixx.sh ''export SETUP_B=1'';
               verify_setups = nixx.sh ''
@@ -193,9 +190,9 @@
                 test "''${SETUP_B:-}" = "1" || { echo "FAIL: setup_b didn't run"; exit 1; }
                 echo "PASS: multi defaultDeps"
               '';
-              all = nixx.task { deps = [ "empty" "special_chars" "verify_setups" ]; } (nixx.sh ''
+              all = (nixx.sh ''
                 echo "=== e2e-edge: ALL PASSED ==="
-              '');
+              '') { deps = [ "empty" "special_chars" "verify_setups" ]; };
             }).runner;
 
         e2eGlobalEnv = mkE2e "e2e-global-env"
@@ -210,43 +207,39 @@
                   || { echo "FAIL: GLOBAL=$GLOBAL"; exit 1; }
                 echo "PASS: global env visible in task"
               '';
-              check_override = nixx.task
-                {
-                  env = { OVERRIDE_ME = "per_task_value"; };
-                }
-                (nixx.sh ''
-                  test "$OVERRIDE_ME" = "per_task_value" \
-                    || { echo "FAIL: OVERRIDE_ME=$OVERRIDE_ME"; exit 1; }
-                  echo "PASS: per-task env overrides global env"
-                '');
-              check_merge = nixx.task
-                {
-                  env = { EXTRA = "per_task_extra"; };
-                }
-                (nixx.sh ''
-                  test "$GLOBAL" = "from_mktasks" \
-                    || { echo "FAIL: GLOBAL=$GLOBAL"; exit 1; }
-                  test "$EXTRA" = "per_task_extra" \
-                    || { echo "FAIL: EXTRA=$EXTRA"; exit 1; }
-                  echo "PASS: global and per-task env both visible"
-                '');
-              all = nixx.task { deps = [ "check_global" "check_override" "check_merge" ]; } (nixx.sh ''
+              check_override = (nixx.sh ''
+                test "$OVERRIDE_ME" = "per_task_value" \
+                  || { echo "FAIL: OVERRIDE_ME=$OVERRIDE_ME"; exit 1; }
+                echo "PASS: per-task env overrides global env"
+              '') {
+                env = { OVERRIDE_ME = "per_task_value"; };
+              };
+              check_merge = (nixx.sh ''
+                test "$GLOBAL" = "from_mktasks" \
+                  || { echo "FAIL: GLOBAL=$GLOBAL"; exit 1; }
+                test "$EXTRA" = "per_task_extra" \
+                  || { echo "FAIL: EXTRA=$EXTRA"; exit 1; }
+                echo "PASS: global and per-task env both visible"
+              '') {
+                env = { EXTRA = "per_task_extra"; };
+              };
+              all = (nixx.sh ''
                 echo "=== e2e-global-env: ALL PASSED ==="
-              '');
+              '') { deps = [ "check_global" "check_override" "check_merge" ]; };
             }).runner;
 
         e2eCircular = mkE2e "e2e-circular"
           (nixx.mkTasks { name = "e2e-circular"; } {
-            circ_a = nixx.task { deps = [ "circ_b" ]; } (nixx.sh ''export CIRC_A=1'');
-            circ_b = nixx.task { deps = [ "circ_a" ]; } (nixx.sh ''export CIRC_B=1'');
-            verify = nixx.task { deps = [ "circ_a" "circ_b" ]; } (nixx.sh ''
+            circ_a = (nixx.sh ''export CIRC_A=1'') { deps = [ "circ_b" ]; };
+            circ_b = (nixx.sh ''export CIRC_B=1'') { deps = [ "circ_a" ]; };
+            verify = (nixx.sh ''
               test "''${CIRC_A:-}" = "1" || { echo "FAIL: circ_a body didn't run"; exit 1; }
               test "''${CIRC_B:-}" = "1" || { echo "FAIL: circ_b body didn't run"; exit 1; }
               echo "PASS: circular deps handled by guard"
-            '');
-            all = nixx.task { deps = [ "verify" ]; } (nixx.sh ''
+            '') { deps = [ "circ_a" "circ_b" ]; };
+            all = (nixx.sh ''
               echo "=== e2e-circular: ALL PASSED ==="
-            '');
+            '') { deps = [ "verify" ]; };
           }).runner;
 
         # ── e2e-packages: command-dependency resolution via the `packages` option ──
@@ -278,9 +271,9 @@
                 fi
                 echo "PASS: a command absent from packages stays unresolved"
               '';
-              all = nixx.task { deps = [ "uses_pkg" "not_listed" ]; } (nixx.sh ''
+              all = (nixx.sh ''
                 echo "=== e2e-packages: ALL PASSED ==="
-              '');
+              '') { deps = [ "uses_pkg" "not_listed" ]; };
             };
             shellNames = shell: map (d: d.name or "?")
               ((shell.buildInputs or [ ])
@@ -320,17 +313,17 @@
           nix-tasks =
             let
               inherit ((nixx.mkTasks { name = "nix-tasks"; } {
-                fmt = nixx.task { description = "Auto-format all .nix files"; } (nixx.sh ''
+                fmt = (nixx.sh ''
                   nixpkgs-fmt flake.nix lib.nix writers.nix tests/lib-tests.nix \
                     examples/multi-lang-e2e/flake.nix
-                '');
-                fmt-check = nixx.task { description = "Verify formatting (CI)"; } (nixx.sh ''
+                '') { description = "Auto-format all .nix files"; };
+                fmt-check = (nixx.sh ''
                   nixpkgs-fmt --check flake.nix lib.nix writers.nix tests/lib-tests.nix \
                     examples/multi-lang-e2e/flake.nix
-                '');
-                lint = nixx.task { description = "statix static analysis"; } (nixx.sh ''
+                '') { description = "Verify formatting (CI)"; };
+                lint = (nixx.sh ''
                   statix check .
-                '');
+                '') { description = "statix static analysis"; };
                 lint-nixf = nixx.sh ''
                   echo "nixf-tidy --variable-lookup"
                   rc=0
@@ -352,9 +345,9 @@
                   done
                   exit $rc
                 '';
-                check = nixx.task { description = "fmt-check + lint + lint-nixf"; deps = [ "fmt-check" "lint" "lint-nixf" ]; } (nixx.sh ''
+                check = (nixx.sh ''
                   echo "all nix checks passed"
-                '');
+                '') { description = "fmt-check + lint + lint-nixf"; deps = [ "fmt-check" "lint" "lint-nixf" ]; };
               })) runner;
             in
             pkgs.writeShellApplication {
@@ -389,12 +382,16 @@
             pkgs.statix
             pkgs.nixf
             pkgs.jq
+            pkgs.lefthook
           ];
           shellHook = ''
+            # install git hooks (pre-commit: fmt + nix flake check) from lefthook.yml
+            ${pkgs.lefthook}/bin/lefthook install >/dev/null 2>&1 || true
             echo "nixx dev shell — uv $(uv --version 2>/dev/null), bun $(bun --version 2>/dev/null)"
             echo "run tests:   nix run .#test"
             echo "format:      nix fmt"
             echo "lint/format: nix run .#nix-tasks -- check"
+            echo "git hooks:   lefthook (pre-commit → fmt + nix flake check)"
           '';
         };
 

@@ -11,16 +11,15 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        n = nixx.lib;
-        writers = nixx.writers pkgs;
-        inherit (writers) mkApps;
       in
-      with n.runtimeScope;
+      # one `with`: un-prefixes the constructors AND defers Nix's static
+      # undefined-var check, so a bare ${VAR} in a source-read body is raw shell.
+      with nixx.for pkgs;
       let
         apps = mkApps { packages = [ pkgs.uv pkgs.bun pkgs.nodejs ]; } {
           # ── bash: show dev-environment tool versions ──────────────────────
           # nix run .#status
-          status = n.sh ''
+          status = sh ''
             echo "=== dev environment ==="
             printf "  home    %s\n" "${HOME}"
             printf "  python  %s\n" "$(python3 --version 2>/dev/null || echo n/a)"
@@ -31,7 +30,7 @@
 
           # ── python/uv: project health report (deps from ./py) ─────────────
           # nix run .#report
-          report = n.uv ''
+          report = uv ''
             from rich import print
             from rich.table import Table
             t = Table(title="python project")
@@ -44,7 +43,7 @@
 
           # ── typescript/bun: project validation (deps from ./ts) ───────────
           # nix run .#validate
-          validate = n.bun ''
+          validate = bun ''
             import chalk from "chalk";
             const checks: [string, boolean][] = [
               ["python env",  true],
@@ -67,27 +66,27 @@
         #   tasks check     → report then validate (just-style deps)
         # task bodies are read from SOURCE (so a shell ${VAR} would be raw), so
         # to splice in a Nix derivation path use the explicit @nix() marker.
-        mkT = writers.mkTasks
+        mkT = mkTasks
           {
             name = "tasks";
             vars = { inherit status report validate; };
           }
           {
-            status = n.sh ''
+            status = sh ''
               status="@nix(status)"
               "$status/bin/status"
             '';
-            report = n.sh ''
+            report = sh ''
               report="@nix(report)"
               "$report/bin/report"
             '';
-            validate = n.sh ''
+            validate = sh ''
               validate="@nix(validate)"
               "$validate/bin/validate"
             '';
-            check = n.task { deps = [ "report" "validate" ]; } (n.sh ''
+            check = (sh ''
               echo "all checks passed"
-            '');
+            '') { deps = [ "report" "validate" ]; };
           };
       in
       {

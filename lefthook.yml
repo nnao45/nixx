@@ -1,0 +1,17 @@
+# lefthook — git hooks for nixx.
+# Managed via Nix: `pkgs.lefthook` is in the devShell, and `nix develop`'s
+# shellHook runs `lefthook install` to wire .git/hooks. Enter the shell once:
+#
+#   nix develop
+#
+# pre-commit: auto-format every .nix file (re-staged), then gate the commit on
+# the full `nix flake check` (lib tests + nix-tasks + e2e runners, all gated).
+pre-commit:
+  parallel: false
+  commands:
+    fmt:
+      glob: "*.nix"
+      run: nix run .#nix-tasks -- fmt
+      stage_fixed: true
+    flake-check:
+      run: nix flake check

@@ -11,14 +11,13 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        n = nixx.lib;
-        w = nixx.writers pkgs;
       in
-      # `with n.runtimeScope;` defers Nix's static undefined-variable check so
-      # runtime-language ${...} (TS template literals, Perl ${var}, etc.) can
-      # appear in block bodies without a ''${ escape — bodies are source-read,
-      # never forced, so the Nix thunks are never evaluated.
-      with n.runtimeScope;
+      # one `with`: un-prefixes the constructors AND defers Nix's static
+        # undefined-variable check, so runtime-language ${...} (TS template
+        # literals, Perl ${var}, etc.) can appear in source-read block bodies
+        # without a ''${ escape — bodies are never forced, so the Nix thunks are
+        # never evaluated.
+      with nixx.for pkgs;
       let
         # nodeModules shared by tsx-demo and node-demo.
         # Inline nixx-hello package created in the Nix store — no npm/network needed.
@@ -44,13 +43,13 @@
           '';
         };
 
-        appPkgs = w.mkApps { } {
+        appPkgs = mkApps { } {
 
           # ── 1. Python / uv ────────────────────────────────────────────────
           # Deps: ./py/pyproject.toml + uv.lock  (rich>=13).
           # Build: ruff-gated (offline). Runtime: `uv run --frozen` resolves from
           # the lockfile — needs network on first run if packages aren't cached.
-          uv-demo = n.uv ''
+          uv-demo = uv ''
             from rich import print
             from rich.table import Table
             t = Table(title="nixx e2e — uv")
@@ -59,7 +58,8 @@
             t.add_column("status")
             t.add_row("python/uv", "pyproject.toml + uv.lock (rich)", "[green]PASS[/]")
             print(t)
-          '' { projectRoot = ./py; };
+          ''
+            { projectRoot = ./py; };
 
           # ── 2. TypeScript / bun (compile → standalone binary) ─────────────
           # Deps: ./bun_ts/package.json + bun.lock  (chalk ^5.3.0).
@@ -67,7 +67,7 @@
           # NOTE: `bun install` needs network at build time.
           #   macOS: nix run .#bun-demo  (works without extra flags)
           #   Linux: nix run .#bun-demo --option sandbox false
-          bun-demo = n.bun ''
+          bun-demo = bun ''
             import chalk from "chalk";
             const runtime = "typescript/bun";
             const src     = "package.json + bun.lock (chalk)";
@@ -75,12 +75,13 @@
               chalk.green(`✓ ${runtime}`) +
               `  dep: ${src}  status: ` + chalk.bold("PASS")
             );
-          '' { projectRoot = ./bun_ts; compile = true; };
+          ''
+            { projectRoot = ./bun_ts; compile = true; };
 
           # ── 3. TypeScript / tsx (Node + TS type-stripping) ────────────────
           # Deps: nixx-hello from the Nix-built nodeModules derivation.
           # NODE_PATH is set via wrapProgram; fully sandbox-safe.
-          tsx-demo = n.ts ''
+          tsx-demo = ts ''
             interface Greeting { from: string; message: string; version: string }
             // eslint-disable-next-line @typescript-eslint/no-require-imports
             const nixxHello = require("nixx-hello") as {
@@ -94,11 +95,12 @@
             };
             console.log(`✓ typescript/tsx  dep: ${g.from}@${g.version}  status: PASS`);
             console.log(`                  ${g.message}`);
-          '' { inherit nodeModules; };
+          ''
+            { inherit nodeModules; };
 
           # ── 4. Node.js ────────────────────────────────────────────────────
           # Same nixx-hello nodeModules via NODE_PATH (CommonJS require).
-          node-demo = n.node ''
+          node-demo = node ''
             "use strict";
             const nixxHello = require("nixx-hello");
             const os        = require("os");
@@ -107,12 +109,13 @@
               "  platform: " + os.platform() + "  status: PASS"
             );
             console.log("        " + nixxHello.greet("Node.js"));
-          '' { inherit nodeModules; };
+          ''
+            { inherit nodeModules; };
 
           # ── 5. Deno ───────────────────────────────────────────────────────
           # Deps: inline jsr: import — no package.json, no lockfile.
           # Build: copies .ts (offline). Runtime: deno fetches jsr: on first run.
-          deno-demo = n.deno ''
+          deno-demo = deno ''
             import { bold, green } from "jsr:@std/fmt@1/colors";
             const dep = "jsr:@std/fmt@1/colors";
             console.log(
@@ -123,8 +126,8 @@
 
           # ── 6. Perl ───────────────────────────────────────────────────────
           # JSON::PP ships with pkgs.perl (core module since Perl 5.14).
-          # To add CPAN packages: n.perl '' ... '' { perlPackages = [...]; }
-          perl-demo = n.perl ''
+          # To add CPAN packages: perl '' ... '' { perlPackages = [...]; }
+          perl-demo = perl ''
             use strict;
             use warnings;
             use JSON::PP;
@@ -137,8 +140,8 @@
 
           # ── 7. Ruby ───────────────────────────────────────────────────────
           # `json` ships with pkgs.ruby standard library — no extra gems needed.
-          # To add gems: n.ruby '' ... '' { rubyGems = [...]; }
-          ruby-demo = n.ruby ''
+          # To add gems: ruby '' ... '' { rubyGems = [...]; }
+          ruby-demo = ruby ''
             require "json"
             data = { runtime: "ruby", dep: "json (stdlib)", status: "PASS" }
             puts "✓ ruby  dep: json (stdlib)  status: PASS"
@@ -147,8 +150,8 @@
 
           # ── 8. Lua ────────────────────────────────────────────────────────
           # Built-in Lua (table, string, io) — no luarocks package needed.
-          # To add packages: n.lua '' ... '' { luaPackages = [...]; }
-          lua-demo = n.lua ''
+          # To add packages: lua '' ... '' { luaPackages = [...]; }
+          lua-demo = lua ''
             local result = {
               runtime = "lua",
               dep     = "table/string/io (built-in)",
@@ -232,13 +235,13 @@
         # bun-demo:  excluded; `bun install` at build time needs network
         # deno-demo: build only (copies .ts); runtime fetches jsr: → needs network
         checks = {
-          tsx  = mkCheck "tsx"  "${appPkgs.tsx-demo}/bin/tsx-demo";
+          tsx = mkCheck "tsx" "${appPkgs.tsx-demo}/bin/tsx-demo";
           node = mkCheck "node" "${appPkgs.node-demo}/bin/node-demo";
           perl = mkCheck "perl" "${appPkgs.perl-demo}/bin/perl-demo";
           ruby = mkCheck "ruby" "${appPkgs.ruby-demo}/bin/ruby-demo";
-          lua  = mkCheck "lua"  "${appPkgs.lua-demo}/bin/lua-demo";
+          lua = mkCheck "lua" "${appPkgs.lua-demo}/bin/lua-demo";
           # build-only checks for network-dependent runtimes
-          uv-build   = appPkgs.uv-demo;
+          uv-build = appPkgs.uv-demo;
           deno-build = appPkgs.deno-demo;
         };
 

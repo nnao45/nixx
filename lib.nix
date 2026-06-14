@@ -6,28 +6,30 @@
 # the ${} family — survives VERBATIM with no '' prefix. The one rule Nix imposes
 # is a single line of ceremony at the call site:
 #
-#     with nixx.runtimeScope;          # defers Nix's static undefined-var check;
-#                                    # the source-read body never forces it.
+#     with inputs.nixx.for pkgs;   # un-prefixes the constructors AND defers
+#                                  # Nix's static undefined-var check (any `with`
+#                                  # makes the scope dynamic; the source-read
+#                                  # body never forces it).
 #
 # Then ${VAR} is just shell. A literal ''${...} still works too (the escape is
-# replayed). To inject an actual Nix value, use the explicit markers @nix(x) /
-# @nix:q(x) / @sh:q(x) / @py:q(x) / @js:q(x) — native Nix ${...} interpolation
-# does NOT run in a source-read body (that's the whole point: ${} is the
-# language's, not Nix's).
+# replayed). To inject an actual Nix value, use the explicit markers @nix(x)
+# (raw) / @sh:q(x) (shell-quoted) — native Nix ${...} interpolation does NOT run
+# in a source-read body (that's the whole point: ${} is the language's, not
+# Nix's). To pass a value into a non-bash body, use `env`.
 #
 # A body built programmatically (`bash someVar`, not a literal ''...'') has no
 # source to read, so it falls back to ordinary evaluation — there ${VAR} would
 # need the old ''${VAR} escape. The guard tells the two apart automatically.
 #
-#   with nixx.runtimeScope;
-#   tasks = nixx.mkTasks { vars = { inherit port; }; } {
-#     dev = nixx.task { env.NODE_ENV = "development"; cwd = "./frontend"; } (nixx.bash ''
+#   with inputs.nixx.for pkgs;
+#   tasks = mkTasks { vars = { inherit port; }; } {
+#     dev = bash ''
 #       for d in */; do echo "$d"; done       # */ ok, $d raw
 #       echo "editor is ${EDITOR:-vi}"          # ${} needs NO '' prefix
 #       npm run dev -- --port @nix(port)        # explicit Nix value
-#       greet @nix:q(message)                   # shell-quoted Nix value
-#     '');
-#     test = nixx.sh ''
+#       greet @sh:q(message)                    # shell-quoted Nix value
+#     '' { env.NODE_ENV = "development"; cwd = "./frontend"; };
+#     test = bash ''
 #       cargo test --workspace
 #     '';
 #   };
@@ -105,9 +107,10 @@ let
   # The remaining wall is Nix's STATIC undefined-variable check, which fires on
   # ${name} in a literal even when the string is never forced. That check is
   # deferred to runtime (i.e. never, for an unforced body) once the literal is
-  # under `with runtimeScope;`. So the full incantation is:
+  # under a `with` — and `with inputs.nixx.for pkgs;` is already that `with`. So
+  # the full incantation is:
   #
-  #     with nixx.runtimeScope;
+  #     with inputs.nixx.for pkgs;
   #     mkTasks { } { dev = bash '' echo ${HOME}; npm run dev ''; }
   #
   # The scanner below faithfully replays Nix's own indented-string escapes
@@ -120,8 +123,8 @@ let
   # while a programmatic body (`bash someVar`, or a cross-file re-wrap inside a
   # writer) is left for ordinary evaluation. The rule: the body is the first ''
   # outside any `{ }` opts block, occurring BEFORE the `;` that terminates this
-  # binding (at brace+paren depth 0). Parens are transparent so the common
-  # `task { } (bash ''...'')` wrapper still source-reads. Returns the '' offset
+  # binding (at brace+paren depth 0). Parens are transparent so a parenthesized
+  # `(bash ''...'')` still source-reads. Returns the '' offset
   # or null (no literal body → caller falls back to the evaluated .text).
   skipStr = s: n: i: # i just past opening "; returns past closing "
     if i >= n then i
@@ -202,28 +205,6 @@ let
   # bash / sh: POSIX single-quote.  it's -> 'it'\''s'
   shq = v: "'" + replaceStrings [ "'" ] [ "'\\''" ] (toString v) + "'";
 
-  # python: produces a "double-quoted" python string literal.
-  pyq = v:
-    let
-      s = toString v;
-      esc = replaceStrings
-        [ "\\" "\"" "\n" "\t" "\r" ]
-        [ "\\\\" "\\\"" "\\n" "\\t" "\\r" ]
-        s;
-    in
-    "\"" + esc + "\"";
-
-  # js / ts: JSON-style double-quoted literal (valid JS string).
-  jsq = v:
-    let
-      s = toString v;
-      esc = replaceStrings
-        [ "\\" "\"" "\n" "\t" "\r" ]
-        [ "\\\\" "\\\"" "\\n" "\\t" "\\r" ]
-        s;
-    in
-    "\"" + esc + "\"";
-
   # If a var is a filesystem path, copy it into the store so the generated
   # script is reproducible (a bare path would point at the author's checkout
   # and break under `nix build`). Non-path values pass through unchanged.
@@ -232,31 +213,23 @@ let
     then builtins.path { path = v; name = baseNameOf (toString v); }
     else v;
 
-  # Interpolation markers, longest-first so e.g. @sh:q( is matched before @nix(.
-  #   @nix(x)   -> raw value (toString)
-  #   @nix:q(x) -> shell-quoted (back-compat alias of @sh:q)
-  #   @sh:q(x)  -> bash/sh string literal
-  #   @py:q(x)  -> python string literal
-  #   @js:q(x)  -> js/ts string literal
+  # Interpolation markers, longest-first so @sh:q( is matched before @nix(.
+  #   @nix(x)  -> raw value (toString) — for paths/derivations/numbers
+  #   @sh:q(x) -> bash/sh shell-quoted string literal — for arbitrary strings
+  # To pass a value into a non-bash body, use `env` instead (see mkTasks).
   substVars = vars: text:
     let
       ks = attrNames vars;
       resolved = builtins.mapAttrs storeIfPath vars;
-      # order matters: quoted forms (longer) before the bare @nix(  form.
+      # order matters: the quoted form (longer) before the bare @nix( form.
       froms = builtins.concatLists (map
         (k: [
           "@sh:q(${k})"
-          "@py:q(${k})"
-          "@js:q(${k})"
-          "@nix:q(${k})"
           "@nix(${k})"
         ])
         ks);
       tos = builtins.concatLists (map
         (k: [
-          (shq resolved.${k})
-          (pyq resolved.${k})
-          (jsq resolved.${k})
           (shq resolved.${k})
           (toString resolved.${k})
         ])
@@ -278,28 +251,36 @@ let
   #
   # This works via `__functor`: bash ''body'' returns a block that is also
   # callable, so `(bash ''body'') { opts }` (or without parens via Nix's
-  # left-to-right application: `bash ''body'' { opts }`) merges opts into
-  # __appOptions WITHOUT ever forcing the body string. That avoids the core
-  # hazard: builtins.isAttrs/builtins.typeOf are strict, and a body like
-  # ''echo ${HOME}'' under `with runtimeScope;` throws when forced by a type
-  # check — but the body thunk is kept lazy here and only overwritten by
-  # materializeRaw (source-read) before anyone accesses it.
+  # left-to-right application: `bash ''body'' { opts }`) merges opts top-level
+  # WITHOUT ever forcing the body string. That avoids the core hazard:
+  # builtins.isAttrs/builtins.typeOf are strict, and a body like ''echo ${HOME}''
+  # under `with for pkgs;` throws when forced by a type check — but the body
+  # thunk is kept lazy here and only overwritten by materializeRaw (source-read)
+  # before anyone accesses it.
   mkBlock = lang: body:
     let
       d = dedentInfo body;
       block = {
         __sh = true;
         __lang = lang;
+        # task-relevant defaults, so a bare block IS a complete task (opts are
+        # merged on top via __functor — there is no separate `task` wrapper):
         env = { };
         cwd = null;
+        deps = [ ]; # just-style prerequisite task names
+        group = null; # group label for the runner's --list
         description = null; # one-line summary shown by the runner's --list
         inherit (d) text indent; rawBody = body;
-        # calling the block as a function attaches per-app options:
-        #   bash ''curl ${URL}'' { compile = true; }
+        # calling the block as a function attaches per-block options, the one
+        # idiom shared by mkApps and mkTasks:
+        #   validate = bun ''...'' { compile = true; };          # mkApps opt
+        #   deploy   = sh  ''...'' { env.E = "x"; cwd = ./d; };  # mkTasks opts
+        # opts merge top-level; mkApps/mkTasks each read the keys they care
+        # about. `packages` is global-only, so it is rejected here.
         __functor = _self: opts:
           if opts ? packages
-          then throw "nixx: per-block `packages` is not supported; use mkApps { packages = [...]; } { … } to set PATH globally for all apps in the set."
-          else block // { __appOptions = (block.__appOptions or { }) // opts; };
+          then throw "nixx: per-block `packages` is not supported; use mkApps { packages = [...]; } { … } (or writers.mkTasks { packages = [...]; } { … }) to set PATH globally."
+          else block // opts;
       };
     in
     block;
@@ -315,39 +296,6 @@ let
   perl = mkBlock "perl"; # perl ($VAR / ${VAR} survive source-read like bash)
   ruby = mkBlock "ruby";
   lua = mkBlock "lua";
-
-  # runtimeScope — the empty attrset that, via `with nixx.runtimeScope;`, lets a
-  # block body carry arbitrary ${VAR} with NO '' prefix, leaving each ${name} to
-  # be resolved at RUNTIME by the body's own interpreter (bash/node/perl/...)
-  # rather than by Nix. It is intentionally `{}`: `with` on an (even empty) scope
-  # defers Nix's static undefined-variable check to a runtime that never arrives,
-  # because mkTasks/mkScripts read the body from SOURCE (never forcing the
-  # thunk). The one irreducible line of ceremony for the ${VAR}-tax-free style:
-  #   with nixx.runtimeScope;
-  #   mkTasks { } { dev = bash '' echo ${HOME}; npm run dev ''; }
-  runtimeScope = { };
-
-  task = opts: blk:
-    assert (blk.__sh or false) || throw "nixx.task: second arg must be a nixx block (e.g. nixx.sh ''...'')";
-    assert (!(opts ? needs)) || throw
-      "nixx.task: `needs` was renamed to `deps` (prerequisite tasks).";
-    assert (!(opts ? packages)) || throw
-      "nixx.task: `packages` is not a per-task option; pass it globally to writers.mkTasks { packages = [...]; } { … } so PATH is set for all tasks.";
-    blk // {
-      env = opts.env or { };
-      cwd = opts.cwd or null;
-      # NOTE: there is no per-task `strict` — the runner re-asserts
-      # `set -euo pipefail` at every bash task's entry (see mkRunnerText), so
-      # every task is strict and a prior task's `set +u` can't leak in. A passed
-      # `strict` opt is harmlessly ignored.
-      deps = opts.deps or [ ]; # just-style: run these prerequisite tasks first
-      description = opts.description or blk.description or null; # shown by --list
-      group = opts.group or null; # group label for --list display
-    };
-
-  app = opts: blk:
-    assert (blk.__sh or false) || throw "nixx.app: second arg must be a nixx block (e.g. nixx.sh ''...'')";
-    blk // { __appOptions = (blk.__appOptions or { }) // opts; };
 
   normalize = v:
     if isAttrs v && (v.__sh or false) then v
@@ -632,7 +580,7 @@ let
       strict' = if strict != null then strict else prof.strict;
       # b.text is already source-read when this block came through
       # mkTasks/mkScripts; a directly-built standalone block forces its
-      # evaluated body here (so a bare ${VAR} would need `with runtimeScope` and a
+      # evaluated body here (so a bare ${VAR} would need `with for pkgs` and a
       # source position — i.e. build it through mkScripts).
       text = substVars vars b.text;
       ls = splitLines text;
@@ -708,6 +656,5 @@ let
 in
 {
   inherit sh bash py uv bun ts node deno perl ruby lua mkBlock
-    task app mkTasks mkScript mkScripts shq dedent langProfiles
-    runtimeScope;
+    mkTasks mkScript mkScripts shq dedent langProfiles;
 }

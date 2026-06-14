@@ -614,13 +614,6 @@ let
     }
 
     {
-      name = "substVars @nix:q(x) is identical to @sh:q(x)";
-      got = (lib.mkScript { vars = { x = "hello"; }; } (lib.sh "echo @nix:q(x)\n"))
-        == (lib.mkScript { vars = { x = "hello"; }; } (lib.sh "echo @sh:q(x)\n"));
-      expected = true;
-    }
-
-    {
       name = "substVars: multiple vars replaced";
       got =
         let out = lib.mkScript { vars = { a = 3000; b = 8080; }; } (lib.sh "echo @nix(a) @nix(b)\n");
@@ -635,14 +628,8 @@ let
     }
 
     {
-      name = "substVars @py:q(x): python double-quoted string";
-      got = contains "print(\"hello\")" (lib.mkScript { vars = { msg = "hello"; }; } (lib.py "print(@py:q(msg))\n"));
-      expected = true;
-    }
-
-    {
-      name = "substVars @js:q(x): js double-quoted string";
-      got = contains "console.log(\"hello\")" (lib.mkScript { vars = { msg = "hello"; }; } (lib.bun "console.log(@js:q(msg))\n"));
+      name = "substVars: value into non-bash body uses env, markers stay bash/raw";
+      got = contains "@py:q(msg)" (lib.mkScript { vars = { msg = "hello"; }; } (lib.py "print(@py:q(msg))\n"));
       expected = true;
     }
 
@@ -730,7 +717,7 @@ let
     {
       name = "mkTasks runner: per-task cwd still applied after the reset";
       got =
-        let r = (lib.mkTasks { } { build = lib.task { cwd = "/srv"; } (lib.sh "make\n"); }).runner;
+        let r = (lib.mkTasks { } { build = (lib.sh "make\n") { cwd = "/srv"; }; }).runner;
         in contains "cd -- \"$_NIXX_CWD\"\n  cd -- '/srv'" r;
       expected = true;
     }
@@ -807,20 +794,20 @@ let
     # ----------------------------------------------------------------
     {
       name = "task: description from opts stored on block";
-      got = (lib.task { description = "Build it"; } (lib.sh "make\n")).description;
+      got = ((lib.sh "make\n") { description = "Build it"; }).description;
       expected = "Build it";
     }
 
     {
       name = "task: description defaults to null";
-      got = (lib.task { } (lib.sh "make\n")).description;
+      got = ((lib.sh "make\n") { }).description;
       expected = null;
     }
 
     {
       name = "mkTasks: description accessible via .tasks.name.description";
       got = (lib.mkTasks { } {
-        build = lib.task { description = "Build it"; } (lib.sh "make\n");
+        build = (lib.sh "make\n") { description = "Build it"; };
       }).tasks.build.description;
       expected = "Build it";
     }
@@ -830,7 +817,7 @@ let
       got =
         let
           inherit ((lib.mkTasks { } {
-            deploy = lib.task { description = "Deploy production"; } (lib.sh "aws s3 sync\n");
+            deploy = (lib.sh "aws s3 sync\n") { description = "Deploy production"; };
           })) meta;
         in
         (head meta).description;
@@ -841,7 +828,7 @@ let
       name = "mkTasks runner: --list shows the description text";
       got = contains "Deploy production"
         (lib.mkTasks { } {
-          deploy = lib.task { description = "Deploy production"; } (lib.sh "aws s3 sync\n");
+          deploy = (lib.sh "aws s3 sync\n") { description = "Deploy production"; };
         }).runner;
       expected = true;
     }
@@ -861,20 +848,20 @@ let
 
     {
       name = "task: group from opts stored on block";
-      got = (lib.task { group = "release"; } (lib.sh "deploy\n")).group;
+      got = ((lib.sh "deploy\n") { group = "release"; }).group;
       expected = "release";
     }
 
     {
       name = "task: group defaults to null";
-      got = (lib.task { } (lib.sh "make\n")).group;
+      got = ((lib.sh "make\n") { }).group;
       expected = null;
     }
 
     {
       name = "mkTasks: group accessible via .tasks.name.group";
       got = (lib.mkTasks { } {
-        deploy = lib.task { group = "release"; } (lib.sh "aws s3 sync\n");
+        deploy = (lib.sh "aws s3 sync\n") { group = "release"; };
       }).tasks.deploy.group;
       expected = "release";
     }
@@ -884,7 +871,7 @@ let
       got =
         let
           inherit ((lib.mkTasks { } {
-            deploy = lib.task { group = "release"; } (lib.sh "aws s3 sync\n");
+            deploy = (lib.sh "aws s3 sync\n") { group = "release"; };
           })) meta;
         in
         (head meta).group;
@@ -895,7 +882,7 @@ let
       name = "mkTasks runner: grouped --list emits group header";
       got = contains "printf '%s\\n' 'release:'"
         (lib.mkTasks { } {
-          deploy = lib.task { description = "Deploy production"; group = "release"; } (lib.sh "aws s3 sync\n");
+          deploy = (lib.sh "aws s3 sync\n") { description = "Deploy production"; group = "release"; };
         }).runner;
       expected = true;
     }
@@ -904,7 +891,7 @@ let
       name = "mkTasks runner: grouped --list emits task under group";
       got = contains "Deploy production"
         (lib.mkTasks { } {
-          deploy = lib.task { description = "Deploy production"; group = "release"; } (lib.sh "aws s3 sync\n");
+          deploy = (lib.sh "aws s3 sync\n") { description = "Deploy production"; group = "release"; };
         }).runner;
       expected = true;
     }
@@ -913,7 +900,7 @@ let
       name = "mkTasks runner: grouped --list omits 'available tasks:' header";
       got = contains "available tasks:"
         (lib.mkTasks { } {
-          deploy = lib.task { group = "release"; } (lib.sh "aws s3 sync\n");
+          deploy = (lib.sh "aws s3 sync\n") { group = "release"; };
         }).runner;
       expected = false;
     }
@@ -922,8 +909,8 @@ let
       name = "mkTasks runner: grouped --list emits blank-line separator between groups";
       got = contains "printf '\\n'"
         (lib.mkTasks { } {
-          deploy = lib.task { group = "release"; } (lib.sh "aws s3 sync\n");
-          build = lib.task { group = "dev"; } (lib.sh "make\n");
+          deploy = (lib.sh "aws s3 sync\n") { group = "release"; };
+          build = (lib.sh "make\n") { group = "dev"; };
         }).runner;
       expected = true;
     }
@@ -933,8 +920,8 @@ let
       got =
         let
           r = (lib.mkTasks { } {
-            deploy = lib.task { group = "release"; } (lib.sh "aws s3 sync\n");
-            build = lib.task { group = "dev"; } (lib.sh "make\n");
+            deploy = (lib.sh "aws s3 sync\n") { group = "release"; };
+            build = (lib.sh "make\n") { group = "dev"; };
           }).runner;
         in
         contains "printf '%s\\n' 'release:'" r && contains "printf '%s\\n' 'dev:'" r;
@@ -955,13 +942,13 @@ let
     # ----------------------------------------------------------------
     {
       name = "task: env from opts stored on block";
-      got = (lib.task { env = { FOO = "bar"; }; } (lib.sh "echo\n")).env;
+      got = ((lib.sh "echo\n") { env = { FOO = "bar"; }; }).env;
       expected = { FOO = "bar"; };
     }
 
     {
       name = "task: env defaults to {}";
-      got = (lib.task { } (lib.sh "echo\n")).env;
+      got = ((lib.sh "echo\n") { }).env;
       expected = { };
     }
 
@@ -969,7 +956,7 @@ let
       name = "mkTasks runner: env var exported in task function";
       got = contains "export FOO='bar'"
         (lib.mkTasks { } {
-          run = lib.task { env = { FOO = "bar"; }; } (lib.sh "echo hi\n");
+          run = (lib.sh "echo hi\n") { env = { FOO = "bar"; }; };
         }).runner;
       expected = true;
     }
@@ -979,7 +966,7 @@ let
       got =
         let
           r = (lib.mkTasks { } {
-            run = lib.task { env = { FOO = "hello"; BAR = "world"; }; } (lib.sh "echo hi\n");
+            run = (lib.sh "echo hi\n") { env = { FOO = "hello"; BAR = "world"; }; };
           }).runner;
         in
         contains "export FOO=" r && contains "export BAR=" r;
@@ -990,7 +977,7 @@ let
       name = "mkTasks runner: env value with spaces is shell-quoted";
       got = contains "export GREETING='hello world'"
         (lib.mkTasks { } {
-          run = lib.task { env = { GREETING = "hello world"; }; } (lib.sh "echo hi\n");
+          run = (lib.sh "echo hi\n") { env = { GREETING = "hello world"; }; };
         }).runner;
       expected = true;
     }
@@ -999,7 +986,7 @@ let
       name = "mkTasks runner: env value with single quote is POSIX-escaped";
       got = contains "export MSG='it'\\''s fine'"
         (lib.mkTasks { } {
-          run = lib.task { env = { MSG = "it's fine"; }; } (lib.sh "echo hi\n");
+          run = (lib.sh "echo hi\n") { env = { MSG = "it's fine"; }; };
         }).runner;
       expected = true;
     }
@@ -1040,7 +1027,7 @@ let
       name = "mkTasks global env: per-task env overrides global for same key";
       got = contains "export FOO='local'"
         (lib.mkTasks { env = { FOO = "global"; }; } {
-          run = lib.task { env = { FOO = "local"; }; } (lib.sh "echo hi\n");
+          run = (lib.sh "echo hi\n") { env = { FOO = "local"; }; };
         }).runner;
       expected = true;
     }
@@ -1049,7 +1036,7 @@ let
       name = "mkTasks global env: global value absent when overridden by per-task";
       got = contains "export FOO='global'"
         (lib.mkTasks { env = { FOO = "global"; }; } {
-          run = lib.task { env = { FOO = "local"; }; } (lib.sh "echo hi\n");
+          run = (lib.sh "echo hi\n") { env = { FOO = "local"; }; };
         }).runner;
       expected = false;
     }
@@ -1059,7 +1046,7 @@ let
       got =
         let
           r = (lib.mkTasks { env = { GLOBAL = "g"; }; } {
-            run = lib.task { env = { LOCAL = "l"; }; } (lib.sh "echo hi\n");
+            run = (lib.sh "echo hi\n") { env = { LOCAL = "l"; }; };
           }).runner;
         in
         contains "export GLOBAL=" r && contains "export LOCAL=" r;
@@ -1101,7 +1088,7 @@ let
 
     # ----------------------------------------------------------------
     # source-read bodies — the ${VAR} antiquotation tax, defeated.
-    # Under `with lib.runtimeScope;` a literal `bash ''...''` (or node/perl/...)
+    # Under `with { };` a literal `bash ''...''` (or node/perl/...)
     # passed to mkTasks/mkScripts is read from SOURCE, so a ${VAR} in the
     # ${}-family survives verbatim with NO '' prefix. The body is never forced,
     # so undefined-in-Nix names like HOME never error.
@@ -1120,13 +1107,13 @@ let
 
     {
       name = "source-read: description carried via task wrapper";
-      got = (lib.task { description = "Deploy"; } (lib.bash "x")).description;
+      got = ((lib.bash "x") { description = "Deploy"; }).description;
       expected = "Deploy";
     }
 
     {
       name = "source-read: deps carried via task wrapper";
-      got = (lib.task { deps = [ "setup" ]; } (lib.bash "x")).deps;
+      got = ((lib.bash "x") { deps = [ "setup" ]; }).deps;
       expected = [ "setup" ];
     }
 
@@ -1134,7 +1121,7 @@ let
     # undefined in Nix — a body that got EVALUATED would throw here.
     {
       name = "source-read: shell \${HOME} verbatim, zero prefix";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
           dev = lib.bash ''
             echo ${HOME}
@@ -1145,7 +1132,7 @@ let
 
     {
       name = "source-read: multiple shell vars in one body";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
           dev = lib.bash ''
             echo ${HOME}
@@ -1157,7 +1144,7 @@ let
 
     {
       name = "source-read: \$VAR (no braces) also raw";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
           dev = lib.bash ''
             ls $PWD
@@ -1169,7 +1156,7 @@ let
     # node/ts/bun/deno: the SAME mechanism rescues JS template-literal ${x}.
     {
       name = "source-read: node template literal `\${x}` survives";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
           hi = lib.node ''
             console.log(`hi ${name}`)
@@ -1181,7 +1168,7 @@ let
     # perl: $VAR / ${VAR} survive too; runner pipes it to the perl interpreter.
     {
       name = "source-read: perl \${VAR} verbatim";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
           p = lib.perl ''
             print ${MSG};
@@ -1192,7 +1179,7 @@ let
 
     {
       name = "perl: task body piped to perl heredoc in runner";
-      got = with lib.runtimeScope;
+      got = with { };
         contains "perl <<'NIXX_EOT"
           (lib.mkTasks { name = "t"; } {
             p = lib.perl ''
@@ -1219,18 +1206,18 @@ let
 
     {
       name = "guard: opts brace `;` does not terminate the binding early";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
-          t = lib.task { env = { A = "1"; }; } (lib.bash ''
+          t = (lib.bash ''
             echo ${HOME}
-          '');
+          '') { env = { A = "1"; }; };
         }).tasks.t.text;
       expected = "echo \${HOME}\n";
     }
 
     {
       name = "source-read: @nix() vars still substituted";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { vars = { port = 9000; }; } {
           svc = lib.bash ''
             echo ${HOST}
@@ -1244,7 +1231,7 @@ let
       name = "source-read: runner contains the source-read shell var";
       got =
         let
-          r = with lib.runtimeScope;
+          r = with { };
             (lib.mkTasks { } {
               run = lib.bash ''
                 echo ${HOME}
@@ -1257,11 +1244,11 @@ let
 
     {
       name = "source-read: task-wrapped body also read from source";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
-          wrapped = lib.task { description = "wrapped"; } (lib.bash ''
+          wrapped = (lib.bash ''
             echo ${HOME}
-          '');
+          '') { description = "wrapped"; };
         }).tasks.wrapped.text;
       expected = "echo \${HOME}\n";
     }
@@ -1270,7 +1257,7 @@ let
       name = "source-read: mkScripts preserves source-read shell var";
       got =
         let
-          s = with lib.runtimeScope;
+          s = with { };
             (lib.mkScripts { } {
               deploy = lib.bash ''
                 echo ${HOME}
@@ -1283,7 +1270,7 @@ let
 
     {
       name = "source-read: replays Nix ''' -> '' escape";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
           t = lib.bash ''
             echo a'''b
@@ -1294,7 +1281,7 @@ let
 
     {
       name = "source-read: multiline body extracted and dedented";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
           multi = lib.bash ''
             echo ${HOME}
@@ -1311,7 +1298,7 @@ let
     # then replays back to a literal $). This is the one residual tax.
     {
       name = "source-read: \${VAR:-default} works with zero prefix";
-      got = with lib.runtimeScope;
+      got = with { };
         let
           inherit ((lib.mkTasks { } {
             t = lib.bash ''
@@ -1325,7 +1312,7 @@ let
 
     {
       name = "source-read: \${VAR/old/new} works with zero prefix";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
           t = lib.bash ''
             echo ${VAR/old/new}
@@ -1336,7 +1323,7 @@ let
 
     {
       name = "source-read: parse-wall \${ARR[@]} needs '' (scanner replays \$)";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
           t = lib.bash ''
             for x in ''${ARR[@]}; do echo "$x"; done
@@ -1347,7 +1334,7 @@ let
 
     {
       name = "source-read: parse-wall \${#VAR} needs '' (scanner replays \$)";
-      got = with lib.runtimeScope;
+      got = with { };
         (lib.mkTasks { } {
           t = lib.bash ''
             echo ''${#VAR}

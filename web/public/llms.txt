@@ -46,7 +46,7 @@ with inputs.nixx.for pkgs;
 let
   tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs ]; } {
     build = bash ''npm run build'';
-    test  = task { deps = [ "build" ]; } (bash ''npm test'');
+    test  = bash ''npm test'' { deps = [ "build" ]; };
   };
 in {
   packages.tasks    = tasks.runner;     # nix run .#tasks -- build
@@ -64,7 +64,7 @@ mkTasks { vars = { port = 3000; name = "world"; }; } {
 
 ## Caveats (gotchas)
 
-- **${} is the language's, not Nix's.** A bare ${HOME} in a body is shell — never write ''${HOME}. To inject a Nix value, use a marker: @nix(x) raw, @sh:q(x) bash-quoted, @py:q(x), @js:q(x). Native Nix ${...} interpolation does not run in a source-read body.
+- **${} is the language's, not Nix's.** A bare ${HOME} in a body is shell — never write ''${HOME}. To inject a Nix value, use a marker: @nix(x) raw (paths/derivations/numbers), @sh:q(x) bash-quoted (strings). Those are the only two; for a non-bash body pass values via `env`. Native Nix ${...} interpolation does not run in a source-read body.
 - **packages is GLOBAL only.** Set it on `mkApps { packages = …; }` or `mkTasks { packages = …; }`. Passing `packages` per-block (`bash ''..'' { packages = …; }`) or per-task throws an error.
 - **The `with` defers undefined-variable checking.** A typo in never-evaluated code under `with inputs.nixx.for pkgs;` is not caught statically — keep the `with` scoped to the flake output that builds your tasks; evaluated code still errors clearly at runtime.
 - **Use `inputs.nixx.for pkgs`, not bare `nixx.for`** (unless you have bound `nixx = inputs.nixx`).
@@ -75,7 +75,7 @@ mkTasks { vars = { port = 3000; name = "world"; }; } {
 
 ## Reference
 
-- Full API (every option of mkApps / mkTasks / task / mkScript, the vars markers, runtimeScope/for): https://nnao45.github.io/nixx/api/
+- Full API (every option of mkApps / mkTasks / mkScript, per-block opts, the vars markers, `for pkgs`): https://nnao45.github.io/nixx/api/
 - Full docs as one text blob (README + API reference, verbatim): https://nnao45.github.io/nixx/llms-full.txt
 - Human-readable docs: https://nnao45.github.io/nixx/
 - Source: https://github.com/nnao45/nixx

@@ -23,18 +23,22 @@ naturally, and `mkApps` dispatches to the right builder.
 | `nixx.ruby` `nixx.lua` | resp. | — | pluggable | none |
 
 \* This column is the tax **only** when a body is *evaluated* (a standalone
-`mkScript`, or legacy `mkApp`/`runApplication` direct-block form). Bodies passed
-as attr values to `mkApps`, `mkTasks`, or `mkScripts` are read from source, so
-they pay **zero** — see the README. Python/Ruby/Lua and TS *type syntax* never
-use `${}` interpolation, so they never pay either way.
+`mkScript`). Bodies passed as attr values to `mkApps`, `mkTasks`, or `mkScripts`
+are read from source, so they pay **zero** — see the README. Python/Ruby/Lua and
+TS *type syntax* never use `${}` interpolation, so they never pay either way.
 
 ## The one rule (only when a body is evaluated)
 `'' ''` is evaluated by Nix before nixx runs, so inside an **evaluated** body a
 shell `${` must be written `''${` and a literal `''` must be written `'''`. This
 is exactly the tax the source-read path removes for apps/tasks/scripts. It still
-applies to standalone `mkScript` and legacy direct-block `mkApp` /
-`runApplication`, because those have no literal attrset position to read from.
-For those, either escape, or pass Nix values with the `@nix(…)` markers below.
+applies to a standalone `mkScript`, because that has no literal attrset position
+to read from. For it, either escape, or pass Nix values with the `@nix(…)`
+markers below.
+
+Even on the source-read path, a `${…}` that isn't valid Nix (`${VAR:-}`,
+`${ARR[@]}`, `${V^^}`, `${P##*/}`, `${!ref}`) still needs the `''${` escape —
+Nix's lexer rejects it at *parse* time, before any source read. A plain
+`${VAR}` / `$VAR` is raw; see the README's "what's raw, what's constrained".
 
 ## `mkApps` — build shippable store binaries
 Reads each block's `__lang` and dispatches to the matching builder; the result
@@ -74,8 +78,9 @@ mkApps { packages = [ pkgs.rsync ]; } {
   `materializeRaw` reads it (from source), so `${HOME}` in the body is safe.
 - `packages` belongs only to the **global first attrset** of `mkApps` /
   `writers.mkTasks`. Passing it per-block or per-task throws an error.
-- `app { ... } block` still works as a backwards-compatible composition helper.
-  `mkApp` remains as a singleton helper; `runApplication` is a deprecated alias.
+- the very same `bash ''body'' { opts }` call attaches **task** options in
+  `mkTasks` (`deps` / `env` / `cwd` / `description` / `group`) — one idiom, both
+  entry points. For a singleton binary, write a one-attr `mkApps`.
 - low-level builders in `writers.nix`: `writeBashApplication`,
   `writeUvApplication`, `writeBunApplication`, `writeNodeApplication`,
   `writeTsxApplication`, `writeDenoApplication`.
@@ -143,28 +148,27 @@ The README shows the concise version. `writers.mkTasks` (pkgs-bound) returns a
 ready-to-use derivation plus devShell helpers:
 
 ```nix
+with inputs.nixx.for pkgs;
 let
-  nixx    = inputs.nixx.lib;
-  writers = inputs.nixx.writers pkgs;
-  tasks   = writers.mkTasks {
+  tasks = mkTasks {
     name        = "tasks";
     defaultDeps = [ "nixenv" ];
     env         = { CI = "true"; };          # exported in every task
+    packages    = [ pkgs.awscli2 ];          # global — on PATH for every task
   } {
     # runs before EVERY task → no more --extra-experimental-features … each time
-    nixenv = nixx.sh ''export NIX_CONFIG="experimental-features = nix-command flakes"'';
-    build  = nixx.task { description = "Build the project"; } (nixx.sh ''nix build'');
-    test   = nixx.task { description = "Run the test suite"; } (nixx.sh ''nix run .#test'');
-    deploy = nixx.task {
-      description  = "Deploy production";
-      group        = "release";
-      env          = { DEPLOY_ENV = "prod"; };  # merged with global; per-task wins on conflict
-      packages = [ pkgs.awscli2 ];
-      cwd          = ./infra;
-    } (nixx.sh ''aws s3 sync ...'');
-    check  = nixx.task { deps = [ "build" ]; } (nixx.sh ''
+    nixenv = sh ''export NIX_CONFIG="experimental-features = nix-command flakes"'';
+    build  = sh ''nix build''      { description = "Build the project"; };
+    test   = sh ''nix run .#test'' { description = "Run the test suite"; };
+    deploy = sh ''aws s3 sync ...'' {
+      description = "Deploy production";
+      group       = "release";
+      env         = { DEPLOY_ENV = "prod"; };  # merged with global; per-task wins on conflict
+      cwd         = ./infra;
+    };
+    check  = sh ''
       echo ok
-    '');
+    '' { deps = [ "build" ]; };
   };
 in {
   packages.tasks    = tasks.runner;        # nix run .#tasks -- build
@@ -189,8 +193,8 @@ The pure `nixx.mkTasks` (no pkgs) is still available if you only need the runner
 script text or a body's `.text`:
 
 ```nix
-(nixx.mkTasks { name = "tasks"; } { … }).runner          # → bash script string
-(nixx.mkTasks { } { hook = nixx.bash ''…''; }).tasks.hook.text  # → one body, source-read
+(inputs.nixx.lib.mkTasks { name = "tasks"; } { … }).runner          # → bash script string
+(inputs.nixx.lib.mkTasks { } { hook = inputs.nixx.lib.bash ''…''; }).tasks.hook.text  # → one body, source-read
 ```
 
 #### `writers.mkTasks` options
@@ -203,7 +207,7 @@ script text or a body's `.text`:
 | `env` | `{}` | attrset exported as shell env vars in **every** task; per-task `env` overrides on conflict |
 | `defaultDeps` | `[]` | task names prepended to every task's deps; the default-dep tasks themselves are exempt |
 
-#### `nixx.task` options
+#### per-task options (attached as `sh ''body'' { … }`)
 
 | option | default | description |
 |---|---|---|
@@ -224,17 +228,19 @@ heredoc and do **not** receive `$@`; pass data to them via `env` instead.
 
 ## Interpolation (`vars`)
 To splice an actual **Nix** value into a (source-read) body, use a marker —
-native Nix `${…}` does not run there.
+native Nix `${…}` does not run there. There are exactly two:
 
-- `@nix(name)` → raw value   ·   `@nix:q(name)` / `@sh:q(name)` → shell-quoted (bash)
-- `@py:q(name)` / `@js:q(name)` → python / js string literal
+- `@nix(name)` → raw value (for paths / derivations / numbers)
+- `@sh:q(name)` → bash shell-quoted string literal (for arbitrary strings)
 - a **path** value (`./util.py`, `./libdir`) is auto-imported to the store
   (reproducible; exec bit preserved)
 
+To pass a value into a **non-bash** body, use `env` instead of a marker.
+
 ```nix
-with nixx.runtimeScope;
-nixx.mkTasks { vars = { port = 3000; tool = ./bin/tool; }; } {
-  serve = nixx.bash ''
+with inputs.nixx.for pkgs;
+mkTasks { vars = { port = 3000; tool = ./bin/tool; }; } {
+  serve = bash ''
     @nix(tool) --listen ${HOST:-0.0.0.0}:@nix(port)   # ${HOST} raw shell; @nix() = Nix value
   '';
 }
