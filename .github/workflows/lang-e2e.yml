@@ -1,0 +1,54 @@
+name: lang-e2e
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  # Sandbox-safe runtimes: build + run inside pkgs.runCommand, verified via
+  # `nix flake check`.  No network needed; all deps come from the Nix store.
+  #   tsx  — TypeScript / tsx  (nixx-hello nodeModules)
+  #   node — Node.js           (nixx-hello NODE_PATH)
+  #   perl — Perl              (JSON::PP core module)
+  #   ruby — Ruby              (json stdlib)
+  #   lua  — Lua               (built-in table/string/io)
+  sandbox-safe:
+    name: "lang-e2e / sandbox-safe (tsx · node · perl · ruby · lua)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v14
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+      - name: nix flake check (build + run all sandbox-safe runtimes)
+        run: nix flake check ./examples/multi-lang-e2e
+
+  # uv / deno: the binary is built (ruff-gated / .ts copied) in the sandbox,
+  # but the runtime (`uv run`, `deno run`) would fetch packages on first run.
+  # We verify the binary is buildable; actual runtime is exercised manually.
+  build-only:
+    name: "lang-e2e / build-only (uv · deno)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v14
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+      - name: build uv-demo  (ruff lint gate)
+        run: nix build ./examples/multi-lang-e2e#uv-demo
+      - name: build deno-demo  (copies .ts to store)
+        run: nix build ./examples/multi-lang-e2e#deno-demo
+
+  # bun: `bun install` fetches chalk from npm at build time, so the sandbox
+  # must be disabled.  The result is a self-contained compiled binary.
+  bun:
+    name: "lang-e2e / bun (compile + chalk dep)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v14
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+      - name: build bun-demo  (bun install needs network → sandbox false)
+        run: nix build ./examples/multi-lang-e2e#bun-demo --option sandbox false
+      - name: run bun-demo  (standalone compiled binary, no network needed)
+        run: ./result/bin/bun-demo

@@ -103,9 +103,15 @@ rec {
           writeTsxApplication ((pickFrom appOpts (common ++ [ "nodeModules" ])) // { inherit block; })
         else if lang == "deno" then
           writeDenoApplication ((pickFrom appOpts common) // { inherit block; })
+        else if lang == "perl" then
+          writePerlApplication ((pickFrom appOpts (common ++ [ "perlPackages" ])) // { inherit block; })
+        else if lang == "ruby" then
+          writeRubyApplication ((pickFrom appOpts (common ++ [ "rubyGems" ])) // { inherit block; })
+        else if lang == "lua" then
+          writeLuaApplication ((pickFrom appOpts (common ++ [ "luaPackages" ])) // { inherit block; })
         else
           throw ("nixx.mkApps: no builder for lang '" + lang + "' "
-            + "(have: bash, python-uv, bun, node, typescript, deno)");
+            + "(have: bash, python-uv, bun, node, typescript, deno, perl, ruby, lua)");
       result = nixx.mkTasks { vars = opts.vars or { }; } apps;
       globalOpts = lib.removeAttrs opts [ "name" "vars" ];
     in
@@ -291,8 +297,12 @@ rec {
       '';
       installPhase = ''
         runHook preInstall
-        mkdir -p "$out/bin"
-        cp prog "$out/bin/${name}"
+        mkdir -p "$out/bin" "$out/share/${name}"
+        tail -n +2 prog > "$out/share/${name}/main.js"
+        cat > "$out/bin/${name}" <<LAUNCH
+        #!${pkgs.runtimeShell}
+        exec ${pkgs.nodejs}/bin/node "$out/share/${name}/main.js" "\$@"
+        LAUNCH
         chmod +x "$out/bin/${name}"
         wrapProgram "$out/bin/${name}" \
           --prefix PATH : ${binPath} \
@@ -424,6 +434,157 @@ rec {
         wrapProgram "$out/bin/${name}" \
           --prefix PATH : ${binPath} \
           ${lib.optionalString (nodeModules != null) "--set NODE_PATH ${nodePath}"}
+        runHook postInstall
+      '';
+      meta.mainProgram = name;
+    };
+
+  # writePerlApplication — Perl script built to a store-path executable.
+  # Perl module deps are supplied via `perlPackages` (a list of derivations);
+  # nixx calls `pkgs.perl.withPackages` so each module's lib is on PERL5LIB.
+  # Core Perl modules (JSON::PP, Data::Dumper, …) need no extra packages.
+  #   writePerlApplication {
+  #     name = "tool";
+  #     perlPackages = [ pkgs.perlPackages.JSON ];
+  #     block = nixx.perl ''
+  #       use JSON; print JSON->new->encode({ ok => 1 }) . "\n";
+  #     '';
+  #   }
+  writePerlApplication =
+    { name
+    , block
+    , vars ? { }
+    , packages ? [ ]
+    , perlPackages ? [ ]
+    }:
+    let
+      script = nixx.mkScript { lang = "perl"; inherit vars; } block;
+      perlInterp = if perlPackages == [ ] then pkgs.perl
+                   else pkgs.perl.withPackages (_: perlPackages);
+      binPath = lib.makeBinPath ([ perlInterp ] ++ packages);
+    in
+    stdenv.mkDerivation {
+      inherit name;
+      dontUnpack = true;
+      passAsFile = [ "script" ];
+      inherit script;
+      nativeBuildInputs = [ pkgs.makeWrapper ];
+      buildPhase = ''
+        runHook preBuild
+        cp "$scriptPath" prog
+        runHook postBuild
+      '';
+      installPhase = ''
+        runHook preInstall
+        mkdir -p "$out/bin" "$out/share/${name}"
+        tail -n +2 prog > "$out/share/${name}/main.pl"
+        cat > "$out/bin/${name}" <<LAUNCH
+        #!${pkgs.runtimeShell}
+        exec ${perlInterp}/bin/perl "$out/share/${name}/main.pl" "\$@"
+        LAUNCH
+        chmod +x "$out/bin/${name}"
+        wrapProgram "$out/bin/${name}" --prefix PATH : ${binPath}
+        runHook postInstall
+      '';
+      meta.mainProgram = name;
+    };
+
+  # writeRubyApplication — Ruby script built to a store-path executable.
+  # Gem deps are supplied via `rubyGems` (a list of gem derivations);
+  # nixx calls `pkgs.ruby.withPackages` so each gem is available at runtime.
+  # Ruby's standard library (json, csv, …) needs no extra gems.
+  #   writeRubyApplication {
+  #     name = "tool";
+  #     rubyGems = [ pkgs.rubyPackages.faraday ];
+  #     block = nixx.ruby ''
+  #       require "json"; puts JSON.dump({ ok: true })
+  #     '';
+  #   }
+  writeRubyApplication =
+    { name
+    , block
+    , vars ? { }
+    , packages ? [ ]
+    , rubyGems ? [ ]
+    }:
+    let
+      script = nixx.mkScript { lang = "ruby"; inherit vars; } block;
+      rubyInterp = if rubyGems == [ ] then pkgs.ruby
+                   else pkgs.ruby.withPackages (_: rubyGems);
+      binPath = lib.makeBinPath ([ rubyInterp ] ++ packages);
+    in
+    stdenv.mkDerivation {
+      inherit name;
+      dontUnpack = true;
+      passAsFile = [ "script" ];
+      inherit script;
+      nativeBuildInputs = [ pkgs.makeWrapper ];
+      buildPhase = ''
+        runHook preBuild
+        cp "$scriptPath" prog
+        runHook postBuild
+      '';
+      installPhase = ''
+        runHook preInstall
+        mkdir -p "$out/bin" "$out/share/${name}"
+        tail -n +2 prog > "$out/share/${name}/main.rb"
+        cat > "$out/bin/${name}" <<LAUNCH
+        #!${pkgs.runtimeShell}
+        exec ${rubyInterp}/bin/ruby "$out/share/${name}/main.rb" "\$@"
+        LAUNCH
+        chmod +x "$out/bin/${name}"
+        wrapProgram "$out/bin/${name}" --prefix PATH : ${binPath}
+        runHook postInstall
+      '';
+      meta.mainProgram = name;
+    };
+
+  # writeLuaApplication — Lua script built to a store-path executable.
+  # Lua module deps are supplied via `luaPackages` (a list of derivations);
+  # nixx calls `pkgs.lua.withPackages` so LUA_PATH/LUA_CPATH are set.
+  # Built-in Lua (table, string, io, math, …) needs no extra packages.
+  #   writeLuaApplication {
+  #     name = "tool";
+  #     luaPackages = [ pkgs.luaPackages.dkjson ];
+  #     block = nixx.lua ''
+  #       local json = require "dkjson"
+  #       print(json.encode({ ok = true }))
+  #     '';
+  #   }
+  writeLuaApplication =
+    { name
+    , block
+    , vars ? { }
+    , packages ? [ ]
+    , luaPackages ? [ ]
+    }:
+    let
+      script = nixx.mkScript { lang = "lua"; inherit vars; } block;
+      luaInterp = if luaPackages == [ ] then pkgs.lua
+                  else pkgs.lua.withPackages (_: luaPackages);
+      binPath = lib.makeBinPath ([ luaInterp ] ++ packages);
+    in
+    stdenv.mkDerivation {
+      inherit name;
+      dontUnpack = true;
+      passAsFile = [ "script" ];
+      inherit script;
+      nativeBuildInputs = [ pkgs.makeWrapper ];
+      buildPhase = ''
+        runHook preBuild
+        cp "$scriptPath" prog
+        runHook postBuild
+      '';
+      installPhase = ''
+        runHook preInstall
+        mkdir -p "$out/bin" "$out/share/${name}"
+        tail -n +2 prog > "$out/share/${name}/main.lua"
+        cat > "$out/bin/${name}" <<LAUNCH
+        #!${pkgs.runtimeShell}
+        exec ${luaInterp}/bin/lua "$out/share/${name}/main.lua" "\$@"
+        LAUNCH
+        chmod +x "$out/bin/${name}"
+        wrapProgram "$out/bin/${name}" --prefix PATH : ${binPath}
         runHook postInstall
       '';
       meta.mainProgram = name;

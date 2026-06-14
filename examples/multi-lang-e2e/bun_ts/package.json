@@ -1,0 +1,7 @@
+{
+  "name": "nixx-e2e-ts",
+  "version": "0.1.0",
+  "dependencies": {
+    "chalk": "^5.3.0"
+  }
+}
