@@ -15,7 +15,7 @@ rec {
   # mkTasks — pkgs-bound wrapper around nixx.mkTasks.  Returns a derivation for
   # the runner plus helpers for wiring it into a devShell, so users can write:
   #
-  #   let tasks = (inputs.nixx.writers pkgs).mkTasks { name = "tasks"; } { ... };
+  #   let tasks = (inputs.nixx.writers pkgs).mkTasks { name = "tasks"; runtimeInputs = [ pkgs.curl ]; } { ... };
   #   in {
   #     packages.tasks    = tasks.runner;         # nix run .#tasks -- build
   #     devShells.default = tasks.devShell;       # nix develop → `tasks` in PATH
@@ -26,19 +26,15 @@ rec {
   #   devShells.default = tasks.extendShell (pkgs.mkShell { packages = [ nodejs ]; });
   #
   # `runner` is a pkgs.writeShellApplication derivation (shellcheck-gated).
-  # All per-task `runtimeInputs` packages are passed as runtimeInputs so
-  # shellcheck can resolve them.  The binary is named after `opts.name`
-  # (defaults to "tasks").
+  # Global `runtimeInputs` from opts are added to PATH for every task in the
+  # runner.  The binary is named after `opts.name` (defaults to "tasks").
   mkTasks = opts: taskDefs:
     let
       name = opts.name or "tasks";
-      result = nixx.mkTasks opts taskDefs;
-      allRequirements = lib.concatMap
-        (t: t.runtimeInputs or [ ])
-        (lib.attrValues result.tasks);
+      result = nixx.mkTasks (lib.removeAttrs opts [ "runtimeInputs" ]) taskDefs;
       runner = pkgs.writeShellApplication {
         inherit name;
-        runtimeInputs = allRequirements;
+        runtimeInputs = opts.runtimeInputs or [ ];
         text = result.runner;
       };
       taskNames = lib.concatStringsSep " " (map (m: m.name) result.meta);

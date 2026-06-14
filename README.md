@@ -71,18 +71,18 @@ programmatic guard — in [API.md](./API.md).)
 clearly at runtime.
 
 ## Per-app options — call the block with opts
-Call the block like a function with an attrset of options.
+Call the block like a function with an attrset of language-specific options.
 No `app { } (...)` wrapper needed:
 
 ```nix
 with nixx.for pkgs;
-mkApps { } {
-  # bash — add tools to PATH
+mkApps { runtimeInputs = [ pkgs.curl pkgs.jq ]; } {
+  # bash — runtimeInputs is a global option on mkApps (adds to PATH for all apps)
   fetch  = bash ''
     curl -s https://api.example.com | jq .
-  '' { runtimeInputs = [ pkgs.curl pkgs.jq ]; };
+  '';
 
-  # python/uv — inline requirements (PEP 723) or point at a project manifest
+  # python/uv — language-specific options are still per-block
   report = uv ''
     from rich import print
     print("[green]ok[/]")
@@ -101,9 +101,10 @@ mkApps { } {
 }
 ```
 
-Each block is callable: `bash ''body'' { opts }` merges opts into the block
-without ever forcing the body — `${HOME}` stays a lazy thunk until
-`materializeRaw` replaces it with the source-read text.
+`runtimeInputs` is a **global** option: specify it once on `mkApps { }` and it
+applies to every app in the set. Language-specific options (`requirements`,
+`compile`, `projectRoot`, …) are still attached per-block by calling the block
+as a function: `bash ''body'' { compile = true; }`.
 `app { ... } block` still works as a backwards-compatible helper.
 
 ## Apps and shells
@@ -156,10 +157,10 @@ in {
 ```nix
 with nixx.for pkgs;
 let
-  apps  = mkApps { } {
-    envcheck = bash ''jq --version'' { runtimeInputs = [ pkgs.jq ]; };
+  apps  = mkApps { runtimeInputs = [ pkgs.jq ]; } {
+    envcheck = bash ''jq --version'';
   };
-  tasks = mkTasks { name = "tasks"; } { build = bash ''echo ${OUT_DIR:-dist}''; };
+  tasks = mkTasks { name = "tasks"; runtimeInputs = [ pkgs.nodejs ]; } { build = bash ''echo ${OUT_DIR:-dist}''; };
 in {
   packages = apps // { default = tasks.runner; };
   devShells.default = tasks.extendShell (pkgs.mkShell {
@@ -197,8 +198,9 @@ bash process**, so an `export` in an early task (or `defaultDeps`/`env`) persist
 into every later task. **Only env crosses task boundaries** — cwd and shell
 options are normalized at each task's entry (every bash task is `set -euo
 pipefail`; a dep's `cd` or `set +u` can't leak in), so tasks stay predictable.
-Tasks support `deps` (just-style prerequisites), `group`, per-task
-`runtimeInputs` / `cwd` / `env`.
+Tasks support `deps` (just-style prerequisites), `group`, per-task `cwd` / `env`.
+`runtimeInputs` is a **global** option on `writers.mkTasks { runtimeInputs = [...]; }`:
+packages are added to PATH for every task in the runner.
 
 ```
 $ tasks --list
@@ -215,7 +217,7 @@ $ tasks build
 pure (no-pkgs) `nixx.mkTasks` → [API.md](./API.md).
 
 ## More
-- **Multi-language & shippable binaries** — `mkApps`, inline opts (`bash ''…'' { runtimeInputs = […] }`),
+- **Multi-language & shippable binaries** — `mkApps { runtimeInputs = […] }` (global PATH), language opts (`bash ''…'' { compile = true; }`),
   `projectRoot` dependency wiring, `mkScript(s)`, `vars` markers, language table:
   **[API.md](./API.md)**.
 - **Linter source-mapping** — blocks carry their source position, so

@@ -40,16 +40,18 @@ Reads each block's `__lang` and dispatches to the matching builder; the result
 is an attrset of `/nix/store/.../bin/<name>` executables. Attr names become
 binary names, and bodies are source-read.
 
-Per-binary options are attached by **calling the block as a function**:
-`bash ''body'' { opts }` — no separate `app` wrapper:
+**`runtimeInputs` is a global option** on the first attrset — it adds packages to
+PATH for every app in the set. Language-specific options (`requirements`,
+`compile`, `projectRoot`, …) are attached per-block by calling the block as a
+function: `bash ''body'' { opts }` (no separate `app` wrapper):
 
 ```nix
 with inputs.nixx.for pkgs;
-mkApps { } {
+mkApps { runtimeInputs = [ pkgs.rsync ]; } {
   deploy = bash ''
     echo "deploying from ${PWD}"
     rsync -a ./dist/ "$HOST:/srv/"
-  '' { runtimeInputs = [ pkgs.rsync ]; };
+  '';
 
   report = uv ''
     from rich import print
@@ -69,10 +71,8 @@ mkApps { } {
   means `bash ''body'' { opts }` = `(bash ''body'') { opts }`, calling the
   block's `__functor`. The body thunk is **never forced** during this — only
   `materializeRaw` reads it (from source), so `${HOME}` in the body is safe.
-- `runtimeInputs` / `requirements` / `compile` etc. are **mkApps/mkTasks
-  options**, not block properties. Pass them either per-block
-  (`bash ''…'' { runtimeInputs = […]; }`) or globally in the first attrset
-  (`mkApps { runtimeInputs = […]; } { … }`). For mkTasks use `task { runtimeInputs = […]; }`.
+- `runtimeInputs` belongs only to the **global first attrset** of `mkApps` /
+  `writers.mkTasks`. Passing it per-block or per-task throws an error.
 - `app { ... } block` still works as a backwards-compatible composition helper.
   `mkApp` remains as a singleton helper; `runApplication` is a deprecated alias.
 - low-level builders in `writers.nix`: `writeBashApplication`,
@@ -150,7 +150,7 @@ in {
 
 `writers.mkTasks` returns:
 - **`runner`** — a `pkgs.writeShellApplication` derivation (shellcheck-gated).
-  All per-task `runtimeInputs` packages are added to PATH.
+  Global `runtimeInputs` packages from opts are added to PATH for every task.
 - **`devShell`** — `pkgs.mkShell { packages = [runner]; }` with a `shellHook` that
   registers bash tab-completion for all task names.
 - **`extendShell`** — `shell: pkgs.mkShell { inputsFrom = [shell]; packages = [runner]; }`.
@@ -165,11 +165,12 @@ script text or a body's `.text`:
 (nixx.mkTasks { } { hook = nixx.bash ''…''; }).tasks.hook.text  # → one body, source-read
 ```
 
-#### `mkTasks` options
+#### `writers.mkTasks` options
 
 | option | default | description |
 |---|---|---|
 | `name` | `"tasks"` | name embedded in runner comments |
+| `runtimeInputs` | `[]` | packages whose `/bin` join `PATH` for **every** task in the runner |
 | `vars` | `{}` | Nix values interpolated via `@nix(…)` / `@sh:q(…)` markers |
 | `env` | `{}` | attrset exported as shell env vars in **every** task; per-task `env` overrides on conflict |
 | `defaultDeps` | `[]` | task names prepended to every task's deps; the default-dep tasks themselves are exempt |
@@ -181,7 +182,6 @@ script text or a body's `.text`:
 | `description` | `null` | one-line summary shown by `--list`; also on `.tasks.<name>.description` and `.meta` |
 | `group` | `null` | groups tasks under a header in `--list` output |
 | `deps` | `[]` | prerequisite task names run (once each) before this body |
-| `runtimeInputs` | `[]` | packages whose `/bin` join `PATH` for this task |
 | `env` | `{}` | attrset of shell env vars exported before the body; merged with global `mkTasks env`, this wins on conflict |
 | `cwd` | `null` | working directory; the runner `cd`s here after first resetting to the invocation dir (a dep's `cwd` never leaks in) |
 

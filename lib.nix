@@ -294,9 +294,11 @@ let
         description = null; # one-line summary shown by the runner's --list
         inherit (d) text indent; rawBody = body;
         # calling the block as a function attaches per-app options:
-        #   bash ''curl ${URL}'' { runtimeInputs = [ pkgs.curl ]; }
+        #   bash ''curl ${URL}'' { compile = true; }
         __functor = _self: opts:
-          block // { __appOptions = (block.__appOptions or { }) // opts; };
+          if opts ? runtimeInputs
+          then throw "nixx: per-block `runtimeInputs` is not supported; use mkApps { runtimeInputs = [...]; } { … } to set PATH globally for all apps in the set."
+          else block // { __appOptions = (block.__appOptions or { }) // opts; };
       };
     in
     block;
@@ -327,9 +329,10 @@ let
   task = opts: blk:
     assert (blk.__sh or false) || throw "nixx.task: second arg must be a nixx block (e.g. nixx.sh ''...'')";
     assert (!(opts ? needs)) || throw
-      "nixx.task: `needs` was renamed to `deps` (prerequisite tasks). For PATH packages use `runtimeInputs`.";
+      "nixx.task: `needs` was renamed to `deps` (prerequisite tasks).";
+    assert (!(opts ? runtimeInputs)) || throw
+      "nixx.task: `runtimeInputs` is no longer a per-task option; pass packages globally to writers.mkTasks { runtimeInputs = [...]; } { … } so PATH is set for all tasks.";
     blk // {
-      runtimeInputs = opts.runtimeInputs or [ ]; # packages whose /bin join PATH
       env = opts.env or { };
       cwd = opts.cwd or null;
       # NOTE: there is no per-task `strict` — the runner re-asserts
@@ -411,9 +414,6 @@ let
           t = full.${n};
           lang = t.__lang or "bash";
           isBash = lang == "bash" || lang == "sh";
-          reqs = t.runtimeInputs or [ ];
-          pathLine = if reqs == [ ] then "" else
-          "  export PATH=" + shq (concatStringsSep ":" (map (d: "${toString d}/bin") reqs)) + ":\"$PATH\"\n";
           envLines = concatStringsSep ""
             (map (k: "  export ${k}=" + shq t.env.${k} + "\n") (attrNames t.env));
           cwdLine = if t.cwd == null then "" else "  cd -- " + shq t.cwd + "\n";
@@ -435,7 +435,7 @@ let
             + "  _NIXX_DONE=\"$_NIXX_DONE ${n}\"\n";
           bodyRun = langRunner lang (stripShebang t.text);
         in
-        "task_${n}() {\n" + guard + depsLines + strictLine + pathLine + envLines
+        "task_${n}() {\n" + guard + depsLines + strictLine + envLines
         + resetCwdLine + cwdLine + bodyRun + "}\n";
       # dispatcher used by needs: maps a task name to its function.
       dispatch = "_nixx_run() {\n  case \"$1\" in\n"

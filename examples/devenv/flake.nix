@@ -34,11 +34,11 @@
         };
 
         # `tasks <name>` inside `devenv shell`.
-        tasks = mkTasks { name = "tasks"; } {
+        tasks = mkTasks { name = "tasks"; runtimeInputs = [ pkgs.nodejs ]; } {
           fmt = task { description = "Format (raw bash)"; } (bash ''
             echo "formatting ${PWD} as ${USER}"
           '');
-          gen = task { description = "A node generator"; runtimeInputs = [ pkgs.nodejs ]; } (node ''
+          gen = task { description = "A node generator"; } (node ''
             const name = process.env.APP_NAME || "app";
             console.log(`scaffolding ${name} v${process.env.npm_package_version || "0.0.0"}`);
           '');
