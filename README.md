@@ -62,8 +62,7 @@ still need the `''` — which the scanner replays back to a literal `$`:
 Rule of thumb: anything lexically valid as a Nix expression inside `${…}`
 (the `:` / `:off:len` / `!` / `[n]` / identifier-only `/` families) survives
 **raw**; a token Nix can't lex (`@ * # % ^`, a negative index, or a symbol in
-a substitution operand) hits the *parse* wall first and needs `''`. **When in
-doubt, write `''${…}` — it is always correct**, in any of these forms.
+a substitution operand) hits the *parse* wall first and needs `''`. 
 
 Still strictly better than a plain evaluated `''…''`, which needs `''` on
 *everything*. (Mechanism — lazy thunks, `unsafeGetAttrPos`, the literal-vs-
