@@ -1,5 +1,6 @@
 # nixx — Write real shell, JavaScript, Python, and TypeScript inside Nix — without escaping ${}.
 
+[![release](https://img.shields.io/github/v/release/nnao45/nixx?logo=github&label=release&color=5277C3)](https://github.com/nnao45/nixx/releases/latest)
 [![nix flake check](https://github.com/nnao45/nixx/actions/workflows/nix-version-compat.yml/badge.svg)](https://github.com/nnao45/nixx/actions/workflows/nix-version-compat.yml)
 [![Nix ≥ 2.18](https://img.shields.io/badge/nix-%E2%89%A52.18-5277C3?logo=nixos)](https://nixos.org/download/)
 
