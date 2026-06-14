@@ -39,6 +39,10 @@ jobs:
         with:
           nix_path: nixpkgs=channel:nixpkgs-unstable
 
+      - name: Lock web flake (recompute path narHash)
+        working-directory: web
+        run: nix flake update nixx
+
       - name: Build site (via nixx tasks)
         working-directory: web
         run: nix run .#tasks -- build
