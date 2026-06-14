@@ -189,6 +189,8 @@ breaks as a shipped binary. Full options and `env`/`deps` semantics in
 **[API.md](./API.md)**.
 
 ## More
+- **Docs site**: [nnao45.github.io/nixx](https://nnao45.github.io/nixx) — browsable reference with examples.
+- **LLM-friendly plain-text**: [nnao45.github.io/nixx/llms.txt](https://nnao45.github.io/nixx/llms.txt)
 - **Multi-language & shippable binaries**, `mkScript(s)`, `vars` markers
   (`@nix`, `@sh:q`), the full language/option tables: **[API.md](./API.md)**.
 - **Linter source-mapping** — blocks carry their source position, so shellcheck
