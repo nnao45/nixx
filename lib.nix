@@ -272,8 +272,9 @@ let
   # keep rawBody so line-mapping can count blank lines dedent will drop,
   # and indent so col-mapping can re-add stripped leading columns.
   #
-  # Per-app options can be attached by CALLING the block as a function:
-  #   deploy = bash ''rsync -a ./dist/ "$HOST:/srv/"'' { runtimeInputs = [ pkgs.rsync ]; };
+  # Per-app language options can be attached by CALLING the block as a function:
+  #   validate = bun ''...'' { compile = true; };
+  #   report   = uv  ''...'' { projectRoot = ./.; };
   #
   # This works via `__functor`: bash ''body'' returns a block that is also
   # callable, so `(bash ''body'') { opts }` (or without parens via Nix's
@@ -289,15 +290,16 @@ let
       block = {
         __sh = true;
         __lang = lang;
-        runtimeInputs = [ ];
         env = { };
         cwd = null;
         description = null; # one-line summary shown by the runner's --list
         inherit (d) text indent; rawBody = body;
         # calling the block as a function attaches per-app options:
-        #   bash ''curl ${URL}'' { runtimeInputs = [ pkgs.curl ]; }
+        #   bash ''curl ${URL}'' { compile = true; }
         __functor = _self: opts:
-          block // { __appOptions = (block.__appOptions or { }) // opts; };
+          if opts ? packages
+          then throw "nixx: per-block `packages` is not supported; use mkApps { packages = [...]; } { … } to set PATH globally for all apps in the set."
+          else block // { __appOptions = (block.__appOptions or { }) // opts; };
       };
     in
     block;
@@ -328,9 +330,10 @@ let
   task = opts: blk:
     assert (blk.__sh or false) || throw "nixx.task: second arg must be a nixx block (e.g. nixx.sh ''...'')";
     assert (!(opts ? needs)) || throw
-      "nixx.task: `needs` was renamed to `deps` (prerequisite tasks). For PATH packages use `runtimeInputs`.";
+      "nixx.task: `needs` was renamed to `deps` (prerequisite tasks).";
+    assert (!(opts ? packages)) || throw
+      "nixx.task: `packages` is not a per-task option; pass it globally to writers.mkTasks { packages = [...]; } { … } so PATH is set for all tasks.";
     blk // {
-      runtimeInputs = opts.runtimeInputs or [ ]; # packages whose /bin join PATH
       env = opts.env or { };
       cwd = opts.cwd or null;
       # NOTE: there is no per-task `strict` — the runner re-asserts
@@ -412,9 +415,6 @@ let
           t = full.${n};
           lang = t.__lang or "bash";
           isBash = lang == "bash" || lang == "sh";
-          reqs = t.runtimeInputs or [ ];
-          pathLine = if reqs == [ ] then "" else
-          "  export PATH=" + shq (concatStringsSep ":" (map (d: "${toString d}/bin") reqs)) + ":\"$PATH\"\n";
           envLines = concatStringsSep ""
             (map (k: "  export ${k}=" + shq t.env.${k} + "\n") (attrNames t.env));
           cwdLine = if t.cwd == null then "" else "  cd -- " + shq t.cwd + "\n";
@@ -436,7 +436,7 @@ let
             + "  _NIXX_DONE=\"$_NIXX_DONE ${n}\"\n";
           bodyRun = langRunner lang (stripShebang t.text);
         in
-        "task_${n}() {\n" + guard + depsLines + strictLine + pathLine + envLines
+        "task_${n}() {\n" + guard + depsLines + strictLine + envLines
         + resetCwdLine + cwdLine + bodyRun + "}\n";
       # dispatcher used by needs: maps a task name to its function.
       dispatch = "_nixx_run() {\n  case \"$1\" in\n"
@@ -571,8 +571,8 @@ let
   # mkScript: compile ONE block to a standalone executable script.
   # No function wrapper, so a user shebang stays at byte 0 (a real shebang).
   # If the block has no shebang, we prepend one; `strict` adds set -euo pipefail.
-  # runtimeInputs adds their /bin to PATH (like writeShellApplication).
-  #   nixx.mkScript { strict = true; runtimeInputs = [ pkgs.jq ]; } (nixx.sh '' ... '')
+  # packages adds their /bin to PATH (like writeShellApplication).
+  #   nixx.mkScript { strict = true; packages = [ pkgs.jq ]; } (nixx.sh '' ... '')
   # Language profiles: shebang + how to lint. `linter` is the argv that
   # receives the script path; `lineRe`/`colRe` describe how to parse its
   # output (handled by nixx-check). bash stays the default.
@@ -610,7 +610,7 @@ let
 
   # mkScript: compile ONE block to a standalone executable script.
   # `lang` picks a profile (shebang + strict default). An explicit `shebang`
-  # still overrides. For bash, runtimeInputs are injected as PATH export; for
+  # still overrides. For bash, packages are injected as PATH export; for
   # python-uv, `requirements`/`pythonReq` become a PEP 723 header that uv resolves.
   #   nixx.mkScript { lang = "python"; vars = { port = 3000; }; } (nixx.sh '' ... '')
   #   nixx.mkScript { lang = "python-uv"; requirements = [ "requests" ]; } (nixx.sh '' ... '')
@@ -619,7 +619,7 @@ let
     , vars ? { }
     , shebang ? null
     , strict ? null
-    , runtimeInputs ? [ ]
+    , packages ? [ ]
     , requirements ? [ ]
     , pythonReq ? null
     }: blk:
@@ -639,11 +639,11 @@ let
       hasShebang = ls != [ ] && match "#!.*" (head ls) != null;
       head' = if hasShebang then head ls else shebang';
       rest = if hasShebang then tail ls else ls;
-      # bash-only preamble: strict mode + PATH from runtimeInputs
+      # bash-only preamble: strict mode + PATH from packages
       strictLine = if strict' && prof.pathStyle == "bash" then [ "set -euo pipefail" ] else [ ];
       pathLine =
-        if runtimeInputs == [ ] || prof.pathStyle != "bash" then [ ] else
-        [ ("export PATH=" + shq (concatStringsSep ":" (map (d: "${toString d}/bin") runtimeInputs)) + ":\"$PATH\"") ];
+        if packages == [ ] || prof.pathStyle != "bash" then [ ] else
+        [ ("export PATH=" + shq (concatStringsSep ":" (map (d: "${toString d}/bin") packages)) + ":\"$PATH\"") ];
       # uv-only preamble: PEP 723 inline metadata (must come right after shebang)
       uvHeader = if prof.pathStyle == "uv" then pep723 { inherit requirements pythonReq; } else [ ];
       bodyLines = uvHeader ++ strictLine ++ pathLine ++ rest;

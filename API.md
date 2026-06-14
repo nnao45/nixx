@@ -12,13 +12,13 @@ naturally, and `mkApps` dispatches to the right builder.
 
 | constructor | language | deps | lint/gate | `${}` tax (plain `''…''`)* |
 |---|---|---|---|---|
-| `nixx.sh` / `nixx.bash` | bash | runtimeInputs | shellcheck | heavy |
+| `nixx.sh` / `nixx.bash` | bash | `packages` opt | shellcheck | heavy |
 | `nixx.py`   | python | (Nix) | ruff | **none** |
-| `nixx.uv`   | python + uv inline deps | `requirements = [...]` | ruff | **none** |
+| `nixx.uv`   | python + uv inline deps | `requirements` opt | ruff | **none** |
 | `nixx.ts` / `nixx.bun` | typescript via bun | auto (imports) | `bun build` (+compile) | light |
 | `nixx.node` | node | Nix node_modules | `node --check` | heavy |
 | `nixx.deno` | deno | `npm:`/`jsr:` inline | deno lint | light |
-| `nixx.perl` | perl | runtimeInputs | — | heavy |
+| `nixx.perl` | perl | `packages` opt | — | heavy |
 | `nixx.ruby` `nixx.lua` | resp. | — | pluggable | none |
 
 \* This column is the tax **only** when a body is *evaluated* (a standalone
@@ -40,16 +40,18 @@ Reads each block's `__lang` and dispatches to the matching builder; the result
 is an attrset of `/nix/store/.../bin/<name>` executables. Attr names become
 binary names, and bodies are source-read.
 
-Per-binary options are attached by **calling the block as a function**:
-`bash ''body'' { opts }` — no separate `app` wrapper:
+**`packages` is a global option** on the first attrset — it adds packages to
+PATH for every app in the set. Language-specific options (`requirements`,
+`compile`, `projectRoot`, …) are attached per-block by calling the block as a
+function: `bash ''body'' { opts }` (no separate `app` wrapper):
 
 ```nix
 with inputs.nixx.for pkgs;
-mkApps { } {
+mkApps { packages = [ pkgs.rsync ]; } {
   deploy = bash ''
     echo "deploying from ${PWD}"
     rsync -a ./dist/ "$HOST:/srv/"
-  '' { runtimeInputs = [ pkgs.rsync ]; };
+  '';
 
   report = uv ''
     from rich import print
@@ -69,6 +71,8 @@ mkApps { } {
   means `bash ''body'' { opts }` = `(bash ''body'') { opts }`, calling the
   block's `__functor`. The body thunk is **never forced** during this — only
   `materializeRaw` reads it (from source), so `${HOME}` in the body is safe.
+- `packages` belongs only to the **global first attrset** of `mkApps` /
+  `writers.mkTasks`. Passing it per-block or per-task throws an error.
 - `app { ... } block` still works as a backwards-compatible composition helper.
   `mkApp` remains as a singleton helper; `runApplication` is a deprecated alias.
 - low-level builders in `writers.nix`: `writeBashApplication`,
@@ -101,7 +105,7 @@ PEP 723 header) — handy for throwaway scripts, but for a project use
 `package.json` + lockfile.
 
 ## `mkScript` / `mkScripts`
-- `nixx.mkScript { lang?, vars?, shebang?, strict?, runtimeInputs?, requirements?, pythonReq? } block`
+- `nixx.mkScript { lang?, vars?, shebang?, strict?, packages?, requirements?, pythonReq? } block`
   → just the script string (with shebang). A standalone block is *evaluated*, so
   a bare `${VAR}` needs `''${VAR}` (or build it through `mkScripts`, which
   source-reads).
@@ -129,7 +133,7 @@ let
       description  = "Deploy production";
       group        = "release";
       env          = { DEPLOY_ENV = "prod"; };  # merged with global; per-task wins on conflict
-      runtimeInputs = [ pkgs.awscli2 ];
+      packages = [ pkgs.awscli2 ];
       cwd          = ./infra;
     } (nixx.sh ''aws s3 sync ...'');
     check  = nixx.task { deps = [ "build" ]; } (nixx.sh ''
@@ -146,7 +150,7 @@ in {
 
 `writers.mkTasks` returns:
 - **`runner`** — a `pkgs.writeShellApplication` derivation (shellcheck-gated).
-  All per-task `runtimeInputs` packages are added to PATH.
+  Global `packages` packages from opts are added to PATH for every task.
 - **`devShell`** — `pkgs.mkShell { packages = [runner]; }` with a `shellHook` that
   registers bash tab-completion for all task names.
 - **`extendShell`** — `shell: pkgs.mkShell { inputsFrom = [shell]; packages = [runner]; }`.
@@ -161,11 +165,12 @@ script text or a body's `.text`:
 (nixx.mkTasks { } { hook = nixx.bash ''…''; }).tasks.hook.text  # → one body, source-read
 ```
 
-#### `mkTasks` options
+#### `writers.mkTasks` options
 
 | option | default | description |
 |---|---|---|
 | `name` | `"tasks"` | name embedded in runner comments |
+| `packages` | `[]` | packages whose `/bin` join `PATH` for **every** task in the runner |
 | `vars` | `{}` | Nix values interpolated via `@nix(…)` / `@sh:q(…)` markers |
 | `env` | `{}` | attrset exported as shell env vars in **every** task; per-task `env` overrides on conflict |
 | `defaultDeps` | `[]` | task names prepended to every task's deps; the default-dep tasks themselves are exempt |
@@ -177,7 +182,6 @@ script text or a body's `.text`:
 | `description` | `null` | one-line summary shown by `--list`; also on `.tasks.<name>.description` and `.meta` |
 | `group` | `null` | groups tasks under a header in `--list` output |
 | `deps` | `[]` | prerequisite task names run (once each) before this body |
-| `runtimeInputs` | `[]` | packages whose `/bin` join `PATH` for this task |
 | `env` | `{}` | attrset of shell env vars exported before the body; merged with global `mkTasks env`, this wins on conflict |
 | `cwd` | `null` | working directory; the runner `cd`s here after first resetting to the invocation dir (a dep's `cwd` never leaks in) |
 
@@ -233,7 +237,7 @@ A runnable example **per language** lives in `examples/simple01`:
 
 ```
 cd examples/simple01
-nix run .#status      # bash   (mkApps + runtimeInputs)
+nix run .#status      # bash   (mkApps + packages)
 nix run .#report      # python (uv, deps from ./py via projectRoot)
 nix run .#validate    # ts     (bun --compile, deps from ./ts)
 nix run .#tasks -- check   # mkTasks runner: report + validate (just-style deps)
@@ -241,7 +245,7 @@ nix run .#tasks -- check   # mkTasks runner: report + validate (just-style deps)
 
 ## Status — proven end-to-end in a real Nix
 1. ✅ shellcheck / ruff / bun build gates (bad code fails the build)
-2. ✅ dependency injection: bash runtimeInputs, uv PEP 723, bun auto-import, node_modules
+2. ✅ dependency injection: bash packages, uv PEP 723, bun auto-import, node_modules
 3. ✅ `@nix(./path)` local-file store import (files + dirs, exec bit kept)
 4. ✅ linter diagnostics remapped to exact `.nix` line:col
 5. ✅ multi-language via constructors (bash/python/uv/bun/ts/node/deno/perl)

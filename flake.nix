@@ -85,8 +85,10 @@
             '');
           }).runner;
 
-        e2eEnv = mkE2e "e2e-env"
-          (nixx.mkTasks { name = "e2e-env"; } {
+        e2eEnv = pkgs.writeShellApplication {
+          name = "e2e-env";
+          runtimeInputs = [ pkgs.jq ];
+          text = (nixx.mkTasks { name = "e2e-env"; } {
             env_test = nixx.task
               {
                 env = { FOO = "hello world"; BAR = "it's a test"; };
@@ -96,12 +98,12 @@
                 test "$BAR" = "it's a test"  || { echo "FAIL: BAR=$BAR"; exit 1; }
                 echo "PASS: env variables"
               '');
-            path_test = nixx.task { runtimeInputs = [ pkgs.jq ]; } (nixx.sh ''
+            path_test = nixx.sh ''
               command -v jq >/dev/null || { echo "FAIL: jq not in PATH"; exit 1; }
               echo '{"ok":true}' | jq -e .ok >/dev/null \
                 || { echo "FAIL: jq not functional"; exit 1; }
-              echo "PASS: runtimeInputs/PATH"
-            '');
+              echo "PASS: global packages/PATH"
+            '';
             cwd_test = nixx.task { cwd = "/tmp"; } (nixx.sh ''
               test "$(pwd)" = "/tmp" \
                 || { echo "FAIL: cwd=$(pwd) expected=/tmp"; exit 1; }
@@ -111,6 +113,7 @@
               echo "=== e2e-env: ALL PASSED ==="
             '');
           }).runner;
+        };
 
         # Volatile state is normalized per task: the runner is ONE bash process
         # (so env exports persist — see e2e-combo), but cwd and shell options are

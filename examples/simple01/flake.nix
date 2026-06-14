@@ -17,7 +17,7 @@
       in
       with n.runtimeScope;
       let
-        apps = mkApps { } {
+        apps = mkApps { packages = [ pkgs.uv pkgs.bun pkgs.nodejs ]; } {
           # ── bash: show dev-environment tool versions ──────────────────────
           # nix run .#status
           status = n.sh ''
@@ -27,7 +27,7 @@
             printf "  uv      %s\n" "$(uv --version      2>/dev/null || echo n/a)"
             printf "  bun     %s\n" "$(bun --version     2>/dev/null || echo n/a)"
             printf "  node    %s\n" "$(node --version    2>/dev/null || echo n/a)"
-          '' { runtimeInputs = [ pkgs.uv pkgs.bun pkgs.nodejs ]; };
+          '';
 
           # ── python/uv: project health report (deps from ./py) ─────────────
           # nix run .#report

@@ -15,7 +15,7 @@ rec {
   # mkTasks — pkgs-bound wrapper around nixx.mkTasks.  Returns a derivation for
   # the runner plus helpers for wiring it into a devShell, so users can write:
   #
-  #   let tasks = (inputs.nixx.writers pkgs).mkTasks { name = "tasks"; } { ... };
+  #   let tasks = (inputs.nixx.writers pkgs).mkTasks { name = "tasks"; packages = [ pkgs.curl ]; } { ... };
   #   in {
   #     packages.tasks    = tasks.runner;         # nix run .#tasks -- build
   #     devShells.default = tasks.devShell;       # nix develop → `tasks` in PATH
@@ -26,19 +26,15 @@ rec {
   #   devShells.default = tasks.extendShell (pkgs.mkShell { packages = [ nodejs ]; });
   #
   # `runner` is a pkgs.writeShellApplication derivation (shellcheck-gated).
-  # All per-task `runtimeInputs` packages are passed as runtimeInputs so
-  # shellcheck can resolve them.  The binary is named after `opts.name`
-  # (defaults to "tasks").
+  # Global `packages` from opts are added to PATH for every task in the
+  # runner.  The binary is named after `opts.name` (defaults to "tasks").
   mkTasks = opts: taskDefs:
     let
       name = opts.name or "tasks";
-      result = nixx.mkTasks opts taskDefs;
-      allRequirements = lib.concatMap
-        (t: t.runtimeInputs or [ ])
-        (lib.attrValues result.tasks);
+      result = nixx.mkTasks (lib.removeAttrs opts [ "packages" ]) taskDefs;
       runner = pkgs.writeShellApplication {
         inherit name;
-        runtimeInputs = allRequirements;
+        runtimeInputs = opts.packages or [ ];
         text = result.runner;
       };
       taskNames = lib.concatStringsSep " " (map (m: m.name) result.meta);
@@ -73,7 +69,7 @@ rec {
   #   mkApps { } {
   #     inspect = nixx.sh ''echo ${HOME}'';
   #     report  = nixx.uv  ''from rich import print ...'' { requirements = [ "rich" ]; };
-  #     fetch   = nixx.sh  ''curl ${URL}'' { runtimeInputs = [ pkgs.curl ]; };
+  #     fetch   = nixx.sh  ''curl ${URL}'';
   #   }
   #
   # Per-app options are attached by calling the block: bash ''body'' { opts }.
@@ -82,7 +78,7 @@ rec {
   # language builder doesn't accept are dropped first so it won't error.
   mkApps = opts: apps:
     let
-      common = [ "name" "vars" "runtimeInputs" ];
+      common = [ "name" "vars" "packages" ];
       pickFrom = src: names: lib.filterAttrs (n: _: lib.elem n names) src;
       dispatch = appOpts: block:
         let lang = block.__lang or "bash";
@@ -167,7 +163,7 @@ rec {
     , pythonReq ? ">=3.11"
     , vars ? { }
     , lintIgnore ? [ ]
-    , runtimeInputs ? [ ]
+    , packages ? [ ]
     , frozen ? true          # use uv.lock as-is (reproducible); false = resolve
     }:
     let
@@ -187,7 +183,7 @@ rec {
         if useProject
         then builtins.path { path = projectRoot; name = "${name}-project"; }
         else null;
-      pathPrefix = lib.makeBinPath ([ pkgs.uv ] ++ runtimeInputs);
+      pathPrefix = lib.makeBinPath ([ pkgs.uv ] ++ packages);
       frozenFlag = lib.optionalString frozen "--frozen";
     in
     stdenv.mkDerivation {
@@ -235,9 +231,10 @@ rec {
   # writeBashApplication — thin alias over nixpkgs' writeShellApplication that
   # accepts a nixx.sh block instead of a raw text string.
   writeBashApplication =
-    { name, runtimeInputs ? [ ], vars ? { }, block, strict ? true }:
+    { name, packages ? [ ], vars ? { }, block, strict ? true }:
     pkgs.writeShellApplication {
-      inherit name runtimeInputs;
+      inherit name;
+      runtimeInputs = packages;
       text = nixx.mkScript
         {
           lang = "bash"; inherit vars strict;
@@ -260,14 +257,14 @@ rec {
     , block
     , vars ? { }
     , nodeModules ? null
-    , runtimeInputs ? [ ]
+    , packages ? [ ]
     , syntaxCheck ? true
     }:
     let
       script = nixx.mkScript { lang = "node"; inherit vars; } block;
       nodePath = lib.optionalString (nodeModules != null)
         "${nodeModules}/lib/node_modules";
-      binPath = lib.makeBinPath ([ pkgs.nodejs ] ++ runtimeInputs);
+      binPath = lib.makeBinPath ([ pkgs.nodejs ] ++ packages);
     in
     stdenv.mkDerivation {
       inherit name;
@@ -310,7 +307,7 @@ rec {
     , block
     , vars ? { }
     , compile ? true
-    , runtimeInputs ? [ ]
+    , packages ? [ ]
     , projectRoot ? null    # dir with package.json (+ bun.lockb); deps from there
     }:
     let
@@ -326,7 +323,7 @@ rec {
         if useProject
         then builtins.path { path = projectRoot; name = "${name}-project"; }
         else null;
-      binPath = lib.makeBinPath ([ pkgs.bun ] ++ runtimeInputs);
+      binPath = lib.makeBinPath ([ pkgs.bun ] ++ packages);
     in
     stdenv.mkDerivation {
       inherit name;
@@ -387,13 +384,13 @@ rec {
     , block
     , vars ? { }
     , nodeModules ? null
-    , runtimeInputs ? [ ]
+    , packages ? [ ]
     }:
     let
       script = nixx.mkScript { lang = "typescript"; inherit vars; } block;
       nodePath = lib.optionalString (nodeModules != null)
         "${nodeModules}/lib/node_modules";
-      binPath = lib.makeBinPath ([ pkgs.tsx ] ++ runtimeInputs);
+      binPath = lib.makeBinPath ([ pkgs.tsx ] ++ packages);
     in
     stdenv.mkDerivation {
       inherit name;
@@ -437,11 +434,11 @@ rec {
     { name
     , block
     , vars ? { }
-    , runtimeInputs ? [ ]
+    , packages ? [ ]
     }:
     let
       script = nixx.mkScript { lang = "deno"; inherit vars; } block;
-      binPath = lib.makeBinPath ([ pkgs.deno ] ++ runtimeInputs);
+      binPath = lib.makeBinPath ([ pkgs.deno ] ++ packages);
     in
     stdenv.mkDerivation {
       inherit name;

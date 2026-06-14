@@ -19,19 +19,19 @@
     flake-utils.lib.eachDefaultSystem (system:
       with nixx.for nixpkgs.legacyPackages.${system};
       let
-        apps = mkApps { } {
+        apps = mkApps { packages = [ pkgs.jq ]; } {
           envcheck = bash ''
             jq --version
             echo "shell user=${USER}"
-          '' { runtimeInputs = [ pkgs.jq ]; };
+          '';
         };
 
-        tasks = mkTasks { name = "tasks"; } {
+        tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs ]; } {
           build = task { description = "Build (raw bash)"; } (bash ''
             out="${OUT_DIR:-dist}"
             echo "building into $out for ${USER}"
           '');
-          check = task { description = "A node check"; runtimeInputs = [ pkgs.nodejs ]; } (node ''
+          check = task { description = "A node check"; } (node ''
             const env = process.env.NODE_ENV || "dev";
             console.log(`checking in ${env} mode`);
           '');
