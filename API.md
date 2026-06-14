@@ -12,13 +12,13 @@ naturally, and `mkApps` dispatches to the right builder.
 
 | constructor | language | deps | lint/gate | `${}` tax (plain `''…''`)* |
 |---|---|---|---|---|
-| `nixx.sh` / `nixx.bash` | bash | runtimeInputs | shellcheck | heavy |
+| `nixx.sh` / `nixx.bash` | bash | `runtimeInputs` opt | shellcheck | heavy |
 | `nixx.py`   | python | (Nix) | ruff | **none** |
-| `nixx.uv`   | python + uv inline deps | `requirements = [...]` | ruff | **none** |
+| `nixx.uv`   | python + uv inline deps | `requirements` opt | ruff | **none** |
 | `nixx.ts` / `nixx.bun` | typescript via bun | auto (imports) | `bun build` (+compile) | light |
 | `nixx.node` | node | Nix node_modules | `node --check` | heavy |
 | `nixx.deno` | deno | `npm:`/`jsr:` inline | deno lint | light |
-| `nixx.perl` | perl | runtimeInputs | — | heavy |
+| `nixx.perl` | perl | `runtimeInputs` opt | — | heavy |
 | `nixx.ruby` `nixx.lua` | resp. | — | pluggable | none |
 
 \* This column is the tax **only** when a body is *evaluated* (a standalone
@@ -69,6 +69,10 @@ mkApps { } {
   means `bash ''body'' { opts }` = `(bash ''body'') { opts }`, calling the
   block's `__functor`. The body thunk is **never forced** during this — only
   `materializeRaw` reads it (from source), so `${HOME}` in the body is safe.
+- `runtimeInputs` / `requirements` / `compile` etc. are **mkApps/mkTasks
+  options**, not block properties. Pass them either per-block
+  (`bash ''…'' { runtimeInputs = […]; }`) or globally in the first attrset
+  (`mkApps { runtimeInputs = […]; } { … }`). For mkTasks use `task { runtimeInputs = […]; }`.
 - `app { ... } block` still works as a backwards-compatible composition helper.
   `mkApp` remains as a singleton helper; `runApplication` is a deprecated alias.
 - low-level builders in `writers.nix`: `writeBashApplication`,

@@ -215,7 +215,7 @@ $ tasks build
 pure (no-pkgs) `nixx.mkTasks` → [API.md](./API.md).
 
 ## More
-- **Multi-language & shippable binaries** — `mkApps`, inline opts (`bash { runtimeInputs = […] } ''…''`),
+- **Multi-language & shippable binaries** — `mkApps`, inline opts (`bash ''…'' { runtimeInputs = […] }`),
   `projectRoot` dependency wiring, `mkScript(s)`, `vars` markers, language table:
   **[API.md](./API.md)**.
 - **Linter source-mapping** — blocks carry their source position, so
