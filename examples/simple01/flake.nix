@@ -17,7 +17,7 @@
       in
       with n.runtimeScope;
       let
-        apps = mkApps { runtimeInputs = [ pkgs.uv pkgs.bun pkgs.nodejs ]; } {
+        apps = mkApps { packages = [ pkgs.uv pkgs.bun pkgs.nodejs ]; } {
           # ── bash: show dev-environment tool versions ──────────────────────
           # nix run .#status
           status = n.sh ''

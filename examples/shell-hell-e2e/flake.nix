@@ -56,7 +56,7 @@
                 '');
               }).runner;
 
-            # ── e2e-env: env vars, global runtimeInputs (PATH), cwd ─────────────
+            # ── e2e-env: env vars, global packages (PATH), cwd ──────────────────
             e2eEnv = pkgs.writeShellApplication {
               name = "e2e-env";
               runtimeInputs = [ pkgs.jq ];
@@ -78,7 +78,7 @@
                   command -v jq >/dev/null || { echo "FAIL: jq not in PATH"; exit 1; }
                   echo '{"ok":true}' | jq -e .ok >/dev/null \
                     || { echo "FAIL: jq not functional"; exit 1; }
-                  echo "PASS: global runtimeInputs/PATH"
+                  echo "PASS: global packages/PATH"
                 '';
 
                 cwd_test = n.task { cwd = "/tmp"; } (n.sh ''

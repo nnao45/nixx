@@ -27,7 +27,7 @@
           '';
         };
 
-        tasks = mkTasks { name = "tasks"; runtimeInputs = [ pkgs.nodejs pkgs.perl ]; } {
+        tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs pkgs.perl ]; } {
           # bash — ${HOME} / ${PWD} are RAW, no '' prefix.
           info = task { description = "Show where we are"; } (bash ''
             echo "user=${USER}  home=${HOME}"

@@ -34,7 +34,7 @@
         };
 
         # `tasks <name>` inside `devenv shell`.
-        tasks = mkTasks { name = "tasks"; runtimeInputs = [ pkgs.nodejs ]; } {
+        tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs ]; } {
           fmt = task { description = "Format (raw bash)"; } (bash ''
             echo "formatting ${PWD} as ${USER}"
           '');
