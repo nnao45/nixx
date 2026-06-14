@@ -1,40 +1,35 @@
 name: nix version compat
 
 on:
-  push:
-    branches: ["**"]
-  pull_request:
-    branches: ["**"]
+    push:
+        branches: ["**"]
+    pull_request:
+        branches: ["**"]
 
 jobs:
-  nix-flake-check:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        nix_version:
-          - "2.18.0"
-          - "2.19.0"
-          - "2.20.0"
-          - "2.21.0"
-          - "2.22.0"
-          - "2.23.0"
-          - "2.24.0"
-          - "2.25.0"
-          - "2.26.0"
-          - "2.27.0"
-          - "2.28.0"
-          - "2.29.0"
-          - "2.30.0"
-    name: nix ${{ matrix.nix_version }}
-    steps:
-      - uses: actions/checkout@v4
+    nix-flake-check:
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                nix_version:
+                    - "2.18.0"
+                    - "2.20.0"
+                    - "2.25.0"
+                    - "2.30.0"
+                    - "2.31.0"
+                    - "2.32.0"
+                    - "2.33.0"
+                    - "2.34.0"
+        name: nix ${{ matrix.nix_version }}
+        steps:
+            - uses: actions/checkout@v4
 
-      - uses: DeterminateSystems/nix-installer-action@v14
-        with:
-          nix-package-url: https://releases.nixos.org/nix/nix-${{ matrix.nix_version }}/nix-${{ matrix.nix_version }}-x86_64-linux.tar.xz
+            - uses: DeterminateSystems/nix-installer-action@v14
+              with:
+                  nix-package-url: https://releases.nixos.org/nix/nix-${{ matrix.nix_version }}/nix-${{ matrix.nix_version }}-x86_64-linux.tar.xz
 
-      - uses: DeterminateSystems/magic-nix-cache-action@v8
+            - uses: DeterminateSystems/magic-nix-cache-action@v8
 
-      - name: nix flake check
-        run: nix flake check
+            - name: nix flake check
+              run: nix flake check

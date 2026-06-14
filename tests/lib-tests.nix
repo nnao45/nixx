@@ -1291,11 +1291,12 @@ let
       expected = "echo \${HOME}\nls $PWD\n";
     }
 
-    # Bash parameter expansion coverage. The common forms parse as Nix
-    # antiquotation bodies and so work with ZERO prefix. The array/length forms
-    # are NOT valid Nix inside ${...}, so they hit the parse wall before any
-    # source read can happen — they still need the '' prefix (which the scanner
-    # then replays back to a literal $). This is the one residual tax.
+    # Bash parameter expansion coverage. Nix 2.34 lexes a ${...} whose body
+    # doesn't resolve to a complete Nix expression as a LITERAL string, so the
+    # colon/slash/indirect/index forms survive source-read with ZERO prefix.
+    # Only forms containing a lexically invalid token (@, #, %, *, ^) hit the
+    # PARSE wall before any source read can happen — those still need '' (which
+    # the scanner replays back to a literal $). This is the one residual tax.
     {
       name = "source-read: \${VAR:-default} works with zero prefix";
       got = with { };
@@ -1311,6 +1312,33 @@ let
     }
 
     {
+      name = "source-read: \${VAR:-} empty-default works with zero prefix";
+      got = with { };
+        (lib.mkTasks { } {
+          t = lib.bash ''
+            echo ${VAR:-}
+          '';
+        }).tasks.t.text;
+      expected = "echo \${VAR:-}\n";
+    }
+
+    {
+      name = "source-read: \${VAR:=d} / \${VAR:+e} / \${VAR:?e} work with zero prefix";
+      got = with { };
+        let
+          inherit ((lib.mkTasks { } {
+            t = lib.bash ''
+              : ${VAR:=d}
+              : ${VAR:+e}
+              : ${VAR:?e}
+            '';
+          })) tasks;
+        in
+        tasks.t.text;
+      expected = ": \${VAR:=d}\n: \${VAR:+e}\n: \${VAR:?e}\n";
+    }
+
+    {
       name = "source-read: \${VAR/old/new} works with zero prefix";
       got = with { };
         (lib.mkTasks { } {
@@ -1319,6 +1347,50 @@ let
           '';
         }).tasks.t.text;
       expected = "echo \${VAR/old/new}\n";
+    }
+
+    {
+      name = "source-read: \${VAR//old/new} global-sub works with zero prefix";
+      got = with { };
+        (lib.mkTasks { } {
+          t = lib.bash ''
+            echo ${VAR//old/new}
+          '';
+        }).tasks.t.text;
+      expected = "echo \${VAR//old/new}\n";
+    }
+
+    {
+      name = "source-read: \${VAR:o:l} substring works with zero prefix";
+      got = with { };
+        (lib.mkTasks { } {
+          t = lib.bash ''
+            echo ${VAR:0:5}
+          '';
+        }).tasks.t.text;
+      expected = "echo \${VAR:0:5}\n";
+    }
+
+    {
+      name = "source-read: \${!ref} indirect works with zero prefix";
+      got = with { };
+        (lib.mkTasks { } {
+          t = lib.bash ''
+            echo ${!ref}
+          '';
+        }).tasks.t.text;
+      expected = "echo \${!ref}\n";
+    }
+
+    {
+      name = "source-read: \${ARR[0]} numeric index works with zero prefix";
+      got = with { };
+        (lib.mkTasks { } {
+          t = lib.bash ''
+            echo ${ARR[0]}
+          '';
+        }).tasks.t.text;
+      expected = "echo \${ARR[0]}\n";
     }
 
     {
@@ -1333,6 +1405,17 @@ let
     }
 
     {
+      name = "source-read: parse-wall \${ARR[*]} needs '' (scanner replays \$)";
+      got = with { };
+        (lib.mkTasks { } {
+          t = lib.bash ''
+            echo ''${ARR[*]}
+          '';
+        }).tasks.t.text;
+      expected = "echo \${ARR[*]}\n";
+    }
+
+    {
       name = "source-read: parse-wall \${#VAR} needs '' (scanner replays \$)";
       got = with { };
         (lib.mkTasks { } {
@@ -1341,6 +1424,50 @@ let
           '';
         }).tasks.t.text;
       expected = "echo \${#VAR}\n";
+    }
+
+    {
+      name = "source-read: parse-wall \${VAR#prefix} needs '' (scanner replays \$)";
+      got = with { };
+        (lib.mkTasks { } {
+          t = lib.bash ''
+            echo ''${VAR#*/ }
+          '';
+        }).tasks.t.text;
+      expected = "echo \${VAR#*/ }\n";
+    }
+
+    {
+      name = "source-read: parse-wall \${VAR%suffix} needs '' (scanner replays \$)";
+      got = with { };
+        (lib.mkTasks { } {
+          t = lib.bash ''
+            echo ''${VAR%.*}
+          '';
+        }).tasks.t.text;
+      expected = "echo \${VAR%.*}\n";
+    }
+
+    {
+      name = "source-read: parse-wall \${VAR^^} case needs '' (scanner replays \$)";
+      got = with { };
+        (lib.mkTasks { } {
+          t = lib.bash ''
+            echo ''${VAR^^}
+          '';
+        }).tasks.t.text;
+      expected = "echo \${VAR^^}\n";
+    }
+
+    {
+      name = "source-read: parse-wall \${ARR[-1]} negative-index needs '' (scanner replays \$)";
+      got = with { };
+        (lib.mkTasks { } {
+          t = lib.bash ''
+            echo ''${ARR[-1]}
+          '';
+        }).tasks.t.text;
+      expected = "echo \${ARR[-1]}\n";
     }
 
   ];
