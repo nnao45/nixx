@@ -1,10 +1,11 @@
 # nixx — full API & reference
 
 The [README](./README.md) covers the headline: raw shell (and the rest of the
-`${}` family) inside pure Nix via `with nixx.for pkgs;`, the three dev-shell
-idioms, and the task runner. This file is everything else — the multi-language
-builders, `mkApps`, dependency wiring, option tables, interpolation
-markers, the linter source-mapping, and the repo's own dev commands.
+`${}` family) inside pure Nix via `with inputs.nixx.for pkgs;`, the three
+dev-shell idioms, and the task runner. This file is everything else — the
+multi-language builders, `mkApps`, apps+tasks composition, dependency wiring,
+option tables, interpolation markers, the linter source-mapping, and the repo's
+own dev commands.
 
 ## Language constructors
 A block carries its own language as `__lang`; pick the constructor that reads
@@ -78,6 +79,31 @@ mkApps { packages = [ pkgs.rsync ]; } {
 - low-level builders in `writers.nix`: `writeBashApplication`,
   `writeUvApplication`, `writeBunApplication`, `writeNodeApplication`,
   `writeTsxApplication`, `writeDenoApplication`.
+
+## Composing apps + tasks
+`mkApps` binaries and `mkTasks` runners compose: put app derivations in the
+runner's `vars`, then call them from a task with `@nix(name)`.
+
+```nix
+with inputs.nixx.for pkgs;
+let
+  apps = mkApps { } {
+    status = bash ''echo "${USER} in ${PWD}"'';
+    report = uv ''
+      from rich import print
+      print("[green]ok[/]")
+    '' { requirements = [ "rich" ]; };
+  };
+  tasks = mkTasks { name = "tasks"; vars = apps; } {
+    check = bash ''
+      status="@nix(status)"
+      report="@nix(report)"
+      "$status/bin/status"
+      "$report/bin/report"
+    '';
+  };
+in { packages = apps // { default = tasks.runner; tasks = tasks.runner; }; }
+```
 
 ## Dependencies: point at the project, don't redeclare them
 Real projects already have a manifest (`pyproject.toml`+`uv.lock`,
