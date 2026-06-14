@@ -297,8 +297,12 @@ rec {
       '';
       installPhase = ''
         runHook preInstall
-        mkdir -p "$out/bin"
-        cp prog "$out/bin/${name}"
+        mkdir -p "$out/bin" "$out/share/${name}"
+        tail -n +2 prog > "$out/share/${name}/main.js"
+        cat > "$out/bin/${name}" <<LAUNCH
+        #!${pkgs.runtimeShell}
+        exec ${pkgs.nodejs}/bin/node "$out/share/${name}/main.js" "\$@"
+        LAUNCH
         chmod +x "$out/bin/${name}"
         wrapProgram "$out/bin/${name}" \
           --prefix PATH : ${binPath} \
