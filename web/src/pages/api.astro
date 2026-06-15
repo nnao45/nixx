@@ -292,7 +292,7 @@ const toc = [
         <section id="scope" class="mt-12 scroll-mt-20">
           <h2 class="font-mono text-xl font-semibold tracking-tight">for pkgs</h2>
           <OptionTable options={[
-            { name: "inputs.nixx.for pkgs", type: "attrset", description: "<code>lib</code> + <code>writers(pkgs)</code> + <code>pkgs</code> in one set, for <code>with inputs.nixx.for pkgs;</code> — the one canonical entry point. The single line of ceremony that un-prefixes the constructors <em>and</em> defers Nix's static undefined-variable check (any <code>with</code> makes the scope dynamic), so a bare <code>${`{VAR}`}</code> survives the source-read." },
+            { name: "inputs.nixx.lib.for pkgs", type: "attrset", description: "<code>lib</code> + <code>writers(pkgs)</code> + <code>pkgs</code> in one set, for <code>with inputs.nixx.lib.for pkgs;</code> — the one canonical entry point. The single line of ceremony that un-prefixes the constructors <em>and</em> defers Nix's static undefined-variable check (any <code>with</code> makes the scope dynamic), so a bare <code>${`{VAR}`}</code> survives the source-read." },
           ]} />
         </section>
 

@@ -12,10 +12,35 @@ let
   inherit (pkgs) lib stdenv;
 in
 rec {
+  # shellHook — pkgs-bound namespace convenience for the pure nixx.shellHook.
+  shellHook = nixx.shellHook;
+
+  # runCommand — pkgs.runCommand with an escape-free bash body attrset.
+  #
+  #   runCommand "x" { } {
+  #     build = bash ''
+  #       echo ${HOME}
+  #       mkdir -p $out
+  #     '';
+  #   }
+  runCommand = name: attrs: scriptAttrs:
+    pkgs.runCommand name attrs (nixx.shellHook scriptAttrs);
+
+  # writeShellApplication — pkgs.writeShellApplication with source-read text.
+  # `text` may be either an ordinary string (passed through) or a one-block
+  # attrset such as `{ main = bash ''...''; }`.
+  writeShellApplication = args:
+    pkgs.writeShellApplication (args // {
+      text =
+        if builtins.isString args.text
+        then args.text
+        else nixx.shellHook args.text;
+    });
+
   # mkTasks — pkgs-bound wrapper around nixx.mkTasks.  Returns a derivation for
   # the runner plus helpers for wiring it into a devShell, so users can write:
   #
-  #   let tasks = (inputs.nixx.writers pkgs).mkTasks { name = "tasks"; packages = [ pkgs.curl ]; } { ... };
+  #   let tasks = (inputs.nixx.lib.writers pkgs).mkTasks { name = "tasks"; packages = [ pkgs.curl ]; } { ... };
   #   in {
   #     packages.tasks    = tasks.runner;         # nix run .#tasks -- build
   #     devShells.default = tasks.devShell;       # nix develop → `tasks` in PATH

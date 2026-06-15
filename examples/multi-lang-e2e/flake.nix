@@ -17,7 +17,7 @@
         # literals, Perl ${var}, etc.) can appear in source-read block bodies
         # without a ''${ escape — bodies are never forced, so the Nix thunks are
         # never evaluated.
-      with nixx.for pkgs;
+      with nixx.lib.for pkgs;
       let
         # nodeModules shared by tsx-demo and node-demo.
         # Inline nixx-hello package created in the Nix store — no npm/network needed.
@@ -255,23 +255,25 @@
             pkgs.ruby
             pkgs.lua
           ];
-          shellHook = ''
-            echo "nixx multi-lang e2e"
-            echo ""
-            echo "  nix run .#default       run all 8 runtimes end-to-end"
-            echo "  nix run .#uv-demo       python + rich  (runtime: uv run)"
-            echo "  nix run .#bun-demo      typescript + chalk  (compiled binary)"
-            echo "  nix run .#tsx-demo      typescript + nixx-hello  (tsx + nodeModules)"
-            echo "  nix run .#node-demo     node.js + nixx-hello  (NODE_PATH)"
-            echo "  nix run .#deno-demo     deno + jsr:@std/fmt  (runtime: deno run)"
-            echo "  nix run .#perl-demo     perl + JSON::PP  (core module)"
-            echo "  nix run .#ruby-demo     ruby + json  (stdlib)"
-            echo "  nix run .#lua-demo      lua + built-in table/string"
-            echo ""
-            echo "  NOTE: bun-demo needs network at build time (bun install)."
-            echo "        Linux: nix run .#bun-demo --option sandbox false"
-            echo "        uv-demo / deno-demo need network at first run."
-          '';
+          shellHook = shellHook {
+            hook = bash ''
+              echo "nixx multi-lang e2e"
+              echo ""
+              echo "  nix run .#default       run all 8 runtimes end-to-end"
+              echo "  nix run .#uv-demo       python + rich  (runtime: uv run)"
+              echo "  nix run .#bun-demo      typescript + chalk  (compiled binary)"
+              echo "  nix run .#tsx-demo      typescript + nixx-hello  (tsx + nodeModules)"
+              echo "  nix run .#node-demo     node.js + nixx-hello  (NODE_PATH)"
+              echo "  nix run .#deno-demo     deno + jsr:@std/fmt  (runtime: deno run)"
+              echo "  nix run .#perl-demo     perl + JSON::PP  (core module)"
+              echo "  nix run .#ruby-demo     ruby + json  (stdlib)"
+              echo "  nix run .#lua-demo      lua + built-in table/string"
+              echo ""
+              echo "  NOTE: bun-demo needs network at build time (bun install)."
+              echo "        Linux: nix run .#bun-demo --option sandbox false"
+              echo "        uv-demo / deno-demo need network at first run."
+            '';
+          };
         };
       });
 }

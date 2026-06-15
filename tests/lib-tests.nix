@@ -1131,6 +1131,29 @@ let
     }
 
     {
+      name = "shellHook: hook attr returns escape-free bash string";
+      got = with { };
+        lib.shellHook {
+          hook = lib.bash ''
+            echo ${HOME}
+          '';
+        };
+      expected = "echo \${HOME}\n";
+    }
+
+    {
+      name = "shellHook: single non-hook attr returns escape-free bash string";
+      got = with { };
+        lib.shellHook {
+          build = lib.bash ''
+            echo ${HOME}
+            mkdir -p $out
+          '';
+        };
+      expected = "echo \${HOME}\nmkdir -p $out\n";
+    }
+
+    {
       name = "source-read: multiple shell vars in one body";
       got = with { };
         (lib.mkTasks { } {
@@ -1540,12 +1563,14 @@ let
     {
       name = "mkTasks runner: parallel task spawns all listed subtasks";
       got =
-        let r = (lib.mkTasks { } {
-          frontend = lib.sh "echo frontend\n";
-          backend = lib.sh "echo backend\n";
-          dev = lib.parallel [ "frontend" "backend" ];
-        }).runner;
-        in contains "task_frontend ) &" r && contains "task_backend ) &" r;
+        let
+          r = (lib.mkTasks { } {
+            frontend = lib.sh "echo frontend\n";
+            backend = lib.sh "echo backend\n";
+            dev = lib.parallel [ "frontend" "backend" ];
+          }).runner;
+        in
+        contains "task_frontend ) &" r && contains "task_backend ) &" r;
       expected = true;
     }
 

@@ -1,7 +1,7 @@
 # nixx — full API & reference
 
 The [README](./README.md) covers the headline: raw shell (and the rest of the
-`${}` family) inside pure Nix via `with inputs.nixx.for pkgs;`, the three
+`${}` family) inside pure Nix via `with inputs.nixx.lib.for pkgs;`, the three
 dev-shell idioms, and the task runner. This file is everything else — the
 multi-language builders, `mkApps`, apps+tasks composition, dependency wiring,
 option tables, interpolation markers, the linter source-mapping, and the repo's
@@ -51,7 +51,7 @@ PATH for every app in the set. Language-specific options (`requirements`,
 function: `bash ''body'' { opts }` (no separate `app` wrapper):
 
 ```nix
-with inputs.nixx.for pkgs;
+with inputs.nixx.lib.for pkgs;
 mkApps { packages = [ pkgs.rsync ]; } {
   deploy = bash ''
     echo "deploying from ${PWD}"
@@ -90,7 +90,7 @@ mkApps { packages = [ pkgs.rsync ]; } {
 runner's `vars`, then call them from a task with `@nix(name)`.
 
 ```nix
-with inputs.nixx.for pkgs;
+with inputs.nixx.lib.for pkgs;
 let
   apps = mkApps { } {
     status = bash ''echo "${USER} in ${PWD}"'';
@@ -117,7 +117,7 @@ there's a single source of truth and no drift:
 
 ```nix
 # preferred: deps come from the project's own manifest
-with inputs.nixx.for pkgs;
+with inputs.nixx.lib.for pkgs;
 mkApps { } {
   report = uv ''
     from rich import print          # rich resolved from ./pyproject.toml + uv.lock
@@ -142,13 +142,45 @@ PEP 723 header) — handy for throwaway scripts, but for a project use
   source-reads).
 - `nixx.mkScripts { lang?, vars? } { name = block; … }` → `{ scripts, meta }`;
   bodies are source-read (zero `${}` tax). `meta` feeds the linter remap.
+- `nixx.shellHook { hook = bash ''…''; }` → just the source-read bash body
+  string, for Nix APIs like `pkgs.mkShell.shellHook` that already want bash
+  text and do not need a runner.
+
+The pkgs-bound namespace (`with inputs.nixx.lib.for pkgs;`) also includes thin
+wrappers for common bash-string APIs:
+
+```nix
+pkgs.mkShell {
+  shellHook = shellHook {
+    hook = bash ''
+      echo ${HOME}
+    '';
+  };
+}
+
+runCommand "x" {} {
+  build = bash ''
+    echo ${HOME}
+    mkdir -p $out
+  '';
+}
+
+writeShellApplication {
+  name = "hello";
+  text = {
+    main = bash ''
+      echo ${HOME}
+    '';
+  };
+}
+```
 
 ## Task runner — full reference
 The README shows the concise version. `writers.mkTasks` (pkgs-bound) returns a
 ready-to-use derivation plus devShell helpers:
 
 ```nix
-with inputs.nixx.for pkgs;
+with inputs.nixx.lib.for pkgs;
 let
   tasks = mkTasks {
     name        = "tasks";
@@ -242,7 +274,7 @@ native Nix `${…}` does not run there. There are exactly two:
 To pass a value into a **non-bash** body, use `env` instead of a marker.
 
 ```nix
-with inputs.nixx.for pkgs;
+with inputs.nixx.lib.for pkgs;
 mkTasks { vars = { port = 3000; tool = ./bin/tool; }; } {
   serve = bash ''
     @nix(tool) --listen ${HOST:-0.0.0.0}:@nix(port)   # ${HOST} raw shell; @nix() = Nix value

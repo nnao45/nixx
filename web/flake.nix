@@ -3,7 +3,7 @@
 
   inputs = {
     # Consume the local nixx the same way an external user would — via the flake
-    # API (`inputs.nixx.for pkgs`). path:../ → always the current working tree,
+    # API (`inputs.nixx.lib.for pkgs`). path:../ → always the current working tree,
     # no published-version lag. If root lib.nix changes, re-run `nix flake lock`.
     nixx.url = "path:../";
     nixpkgs.follows = "nixx/nixpkgs";
@@ -15,7 +15,7 @@
       let
         pkgs = import nixpkgs { inherit system; };
       in
-      with nixx.for pkgs;
+      with nixx.lib.for pkgs;
       let
         # node+npm come from the global `packages` option → they resolve
         # identically via `nix run .#tasks` and on the `nix develop` prompt
