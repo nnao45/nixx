@@ -242,6 +242,67 @@
             '') { deps = [ "verify" ]; };
           }).runner;
 
+        # ── e2e-args: positional args reach task bodies as $@ / argv ──
+        # Runs the generated runner with explicit positional args and asserts that
+        # all supported language runtimes receive them correctly:
+        #   bash   → $1 / $@ / $#  (inline function body)
+        #   python → sys.argv[1:]  (python3 - "$@" heredoc)
+        #   perl   → @ARGV         (perl - "$@" heredoc)
+        #   ruby   → ARGV          (ruby - "$@" heredoc)
+        e2eArgs =
+          let
+            runner = pkgs.writeShellApplication {
+              name = "e2e-args";
+              runtimeInputs = [ pkgs.python3 pkgs.perl pkgs.ruby ];
+              text = (nixx.mkTasks { name = "e2e-args"; } {
+                greet = nixx.sh ''
+                  test "$1" = "hello" \
+                    || { echo "FAIL: bash expected arg1='hello', got '$1'"; exit 1; }
+                  test "$2" = "world" \
+                    || { echo "FAIL: bash expected arg2='world', got '$2'"; exit 1; }
+                  test "$#" -eq 2 \
+                    || { echo "FAIL: bash expected 2 args, got $#"; exit 1; }
+                  echo "PASS: bash: positional args ($*)"
+                '';
+                sum = nixx.sh ''
+                  total=0
+                  for n in "$@"; do
+                    total=$((total + n))
+                  done
+                  test "$total" -eq 6 \
+                    || { echo "FAIL: bash expected sum=6, got $total"; exit 1; }
+                  echo "PASS: bash: iterated $# args, sum=$total"
+                '';
+                py_argc = nixx.py ''
+                  import sys
+                  args = sys.argv[1:]
+                  assert args == ["alpha", "beta"], f"FAIL: python got {args}"
+                  print(f"PASS: python: {args}")
+                '';
+                perl_argc = nixx.perl ''
+                  my @args = @ARGV;
+                  die "FAIL: perl got '@args'\n" unless "@args" eq "a b c";
+                  print "PASS: perl: @args\n";
+                '';
+                ruby_argc = nixx.ruby ''
+                  got = ARGV
+                  exp = ["x", "y"]
+                  raise "FAIL: ruby got #{got}" unless got == exp
+                  puts "PASS: ruby: #{got.inspect}"
+                '';
+              }).runner;
+            };
+          in
+          pkgs.runCommand "e2e-args" { } ''
+            ${runner}/bin/e2e-args greet hello world
+            ${runner}/bin/e2e-args sum 1 2 3
+            ${runner}/bin/e2e-args py_argc alpha beta
+            ${runner}/bin/e2e-args perl_argc a b c
+            ${runner}/bin/e2e-args ruby_argc x y
+            echo "=== e2e-args: ALL PASSED ==="
+            touch "$out"
+          '';
+
         # ── e2e-packages: command-dependency resolution via the `packages` option ──
         # Unlike the others, this check ACTUALLY RUNS the runner (in runCommand)
         # and asserts two contracts of `writers.mkTasks { packages = [...] }`:
@@ -406,6 +467,7 @@
           e2e-edge = e2eEdge;
           e2e-global-env = e2eGlobalEnv;
           e2e-circular = e2eCircular;
+          e2e-args = e2eArgs;
           e2e-packages = e2ePackages;
         };
       });

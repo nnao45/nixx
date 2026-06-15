@@ -222,9 +222,13 @@ so it re-asserts `set -euo pipefail` at every bash task's entry. Every task is
 strict, and a prior task's `set +u` can't leak in. If a specific body needs to
 tolerate an unset var, do it locally (`${VAR:-}` or a scoped `set +u; …; set -u`).
 
-**Positional args** (`tasks <name> a b c`) reach **bash** task bodies as `$@`
-(via `shift; task_<name> "$@"`). Non-bash bodies run as scripts through a
-heredoc and do **not** receive `$@`; pass data to them via `env` instead.
+**Positional args** (`tasks <name> a b c`) are forwarded to all task bodies.
+Bash bodies receive them as `$@` / `$1`, `$2`, … (the normal positional
+parameters, via `shift; task_<name> "$@"`). Non-bash bodies that read from
+stdin via a `-` flag also receive the same args through the interpreter's
+argv (`sys.argv[1:]` in Python, `@ARGV` in Perl, `ARGV` in Ruby, `Deno.args`
+in Deno, `process.argv` in Bun). Node (`--input-type=module`) and TypeScript
+(`tsx`) do not currently receive positional args; pass data to those via `env`.
 
 ## Interpolation (`vars`)
 To splice an actual **Nix** value into a (source-read) body, use a marker —

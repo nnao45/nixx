@@ -723,8 +723,8 @@ let
     }
 
     {
-      name = "mkTasks runner: python body uses python3 heredoc";
-      got = contains "python3 <<'" (lib.mkTasks { } { run = lib.py "print('hi')\n"; }).runner;
+      name = "mkTasks runner: python body uses python3 - heredoc with args";
+      got = contains "python3 - \"$@\" <<'" (lib.mkTasks { } { run = lib.py "print('hi')\n"; }).runner;
       expected = true;
     }
 
@@ -735,8 +735,8 @@ let
     }
 
     {
-      name = "mkTasks runner: bun body uses bun run - heredoc";
-      got = contains "bun run - <<'" (lib.mkTasks { } { run = lib.bun "console.log('hi')\n"; }).runner;
+      name = "mkTasks runner: bun body uses bun run - heredoc with args";
+      got = contains "bun run - \"$@\" <<'" (lib.mkTasks { } { run = lib.bun "console.log('hi')\n"; }).runner;
       expected = true;
     }
 
@@ -747,20 +747,20 @@ let
     }
 
     {
-      name = "mkTasks runner: deno body uses deno run -A - heredoc";
-      got = contains "deno run -A - <<'" (lib.mkTasks { } { run = lib.deno "console.log('hi')\n"; }).runner;
+      name = "mkTasks runner: deno body uses deno run -A - heredoc with args";
+      got = contains "deno run -A - \"$@\" <<'" (lib.mkTasks { } { run = lib.deno "console.log('hi')\n"; }).runner;
       expected = true;
     }
 
     {
-      name = "mkTasks runner: ruby body uses ruby heredoc";
-      got = contains "ruby <<'" (lib.mkTasks { } { run = lib.ruby "puts 'hi'\n"; }).runner;
+      name = "mkTasks runner: ruby body uses ruby - heredoc with args";
+      got = contains "ruby - \"$@\" <<'" (lib.mkTasks { } { run = lib.ruby "puts 'hi'\n"; }).runner;
       expected = true;
     }
 
     {
-      name = "mkTasks runner: lua body uses lua - heredoc";
-      got = contains "lua - <<'" (lib.mkTasks { } { run = lib.lua "print('hi')\n"; }).runner;
+      name = "mkTasks runner: lua body uses lua - heredoc with args";
+      got = contains "lua - \"$@\" <<'" (lib.mkTasks { } { run = lib.lua "print('hi')\n"; }).runner;
       expected = true;
     }
 
@@ -1178,9 +1178,9 @@ let
     }
 
     {
-      name = "perl: task body piped to perl heredoc in runner";
+      name = "perl: task body piped to perl - heredoc with args in runner";
       got = with { };
-        contains "perl <<'NIXX_EOT"
+        contains "perl - \"$@\" <<'NIXX_EOT"
           (lib.mkTasks { name = "t"; } {
             p = lib.perl ''
               print ${MSG};
