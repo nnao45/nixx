@@ -346,17 +346,23 @@ let
           raw = chopNL body; # no extra indentation for heredoc content
           via = interp:
             "  ${interp} <<'${eot}'\n" + raw + "\n${eot}\n";
+          # viaArgs: like via, but forwards the task's positional args ("$@") to
+          # the interpreter. The cmd must already include the stdin flag (e.g. "-")
+          # so that the interpreter reads the heredoc body as the script, not as a
+          # filename, leaving "$@" to become the script's argv.
+          viaArgs = cmd:
+            "  ${cmd} \"$@\" <<'${eot}'\n" + raw + "\n${eot}\n";
         in
         if lang == "bash" || lang == "sh" then indentBody body + "\n"
-        else if lang == "python" then via "python3"
-        else if lang == "python-uv" then via "uv run --no-project -"
+        else if lang == "python" then viaArgs "python3 -"
+        else if lang == "python-uv" then viaArgs "uv run --no-project -"
         else if lang == "node" then via "node --input-type=module"
-        else if lang == "bun" then via "bun run -"
+        else if lang == "bun" then viaArgs "bun run -"
         else if lang == "typescript" then via "tsx"
-        else if lang == "deno" then via "deno run -A -"
-        else if lang == "perl" then via "perl"
-        else if lang == "ruby" then via "ruby"
-        else if lang == "lua" then via "lua -"
+        else if lang == "deno" then viaArgs "deno run -A -"
+        else if lang == "perl" then viaArgs "perl -"
+        else if lang == "ruby" then viaArgs "ruby -"
+        else if lang == "lua" then viaArgs "lua -"
         else via "cat"; # unknown: just echo it (safe fallback)
       fnFor = n:
         let

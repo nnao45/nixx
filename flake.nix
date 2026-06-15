@@ -242,6 +242,42 @@
             '') { deps = [ "verify" ]; };
           }).runner;
 
+        # ── e2e-args: positional args reach task bodies as $@ / argv ──
+        # Runs the generated runner with explicit positional args and asserts that
+        # bash bodies see them via $1 / $@ / $#. (Non-bash bodies are covered by the
+        # interpreter change in langRunner; bash is the only lang available at build
+        # time without extra runtimes.)
+        e2eArgs =
+          let
+            runner = mkE2e "e2e-args"
+              (nixx.mkTasks { name = "e2e-args"; } {
+                greet = nixx.sh ''
+                  test "$1" = "hello" \
+                    || { echo "FAIL: expected arg1='hello', got '$1'"; exit 1; }
+                  test "$2" = "world" \
+                    || { echo "FAIL: expected arg2='world', got '$2'"; exit 1; }
+                  test "$#" -eq 2 \
+                    || { echo "FAIL: expected 2 args, got $#"; exit 1; }
+                  echo "PASS: bash task received positional args ($*)"
+                '';
+                sum = nixx.sh ''
+                  total=0
+                  for n in "$@"; do
+                    total=$((total + n))
+                  done
+                  test "$total" -eq 6 \
+                    || { echo "FAIL: expected sum=6, got $total"; exit 1; }
+                  echo "PASS: bash task iterated $# positional args, sum=$total"
+                '';
+              }).runner;
+          in
+          pkgs.runCommand "e2e-args" { } ''
+            ${runner}/bin/e2e-args greet hello world
+            ${runner}/bin/e2e-args sum 1 2 3
+            echo "=== e2e-args: ALL PASSED ==="
+            touch "$out"
+          '';
+
         # ── e2e-packages: command-dependency resolution via the `packages` option ──
         # Unlike the others, this check ACTUALLY RUNS the runner (in runCommand)
         # and asserts two contracts of `writers.mkTasks { packages = [...] }`:
@@ -406,6 +442,7 @@
           e2e-edge = e2eEdge;
           e2e-global-env = e2eGlobalEnv;
           e2e-circular = e2eCircular;
+          e2e-args = e2eArgs;
           e2e-packages = e2ePackages;
         };
       });
