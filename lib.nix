@@ -297,9 +297,36 @@ let
   ruby = mkBlock "ruby";
   lua = mkBlock "lua";
 
+  # parallel: declare that a set of named tasks should run concurrently.
+  # The listed tasks are spawned as background subshells; the parallel task
+  # waits for all of them and returns the first non-zero exit code (if any).
+  # Supports deps / description / group / env opts via __functor, same as blocks.
+  #
+  #   dev = parallel [ "frontend" "backend" ];
+  #   dev = parallel [ "frontend" "backend" ] { deps = [ "setup" ]; };
+  parallel = tasks:
+    let self = {
+      __sh = true;
+      __lang = "parallel";
+      __parallel = true;
+      parallel = tasks;
+      text = "";
+      rawBody = "";
+      indent = 0;
+      env = { };
+      cwd = null;
+      deps = [ ];
+      group = null;
+      description = null;
+      __functor = _self: opts:
+        if opts ? packages
+        then throw "nixx: per-block `packages` is not supported; use mkApps { packages = [...]; } { … } (or writers.mkTasks { packages = [...]; } { … }) to set PATH globally."
+        else self // opts;
+    }; in self;
+
   normalize = v:
     if isAttrs v && (v.__sh or false) then v
-    else throw "nixx: value must be a nixx block (e.g. nixx.sh ''...'', nixx.bun ''...'')";
+    else throw "nixx: value must be a nixx block or parallel task (e.g. nixx.sh ''...'', nixx.bun ''...'', nixx.parallel [ ... ])";
 
   # materializeRaw — read a block's body from SOURCE at `pos` (unsafeGetAttrPos)
   # instead of forcing the never-evaluated Nix string, so shell/JS ${VAR} in the
@@ -367,6 +394,7 @@ let
       fnFor = n:
         let
           t = full.${n};
+          isParallel = t.__parallel or false;
           lang = t.__lang or "bash";
           isBash = lang == "bash" || lang == "sh";
           envLines = concatStringsSep ""
@@ -389,9 +417,28 @@ let
           guard = "  case \" $_NIXX_DONE \" in *\" ${n} \"*) return 0 ;; esac\n"
             + "  _NIXX_DONE=\"$_NIXX_DONE ${n}\"\n";
           bodyRun = langRunner lang (stripShebang t.text);
+          # parallel task: spawn each listed task in a subshell, wait for all.
+          parallelFn =
+            let
+              pts = t.parallel;
+              spawnLines = concatStringsSep ""
+                (map (pt: "  ( task_${pt} ) & _nixx_pids+=($!)\n") pts);
+              waitLine = if pts == [ ] then ""
+                else "  for _p in \"$" + "{_nixx_pids[@]}\"; do wait \"$_p\" || _nixx_ret=$?; done\n";
+            in
+            "task_${n}() {\n"
+            + guard
+            + depsLines
+            + envLines
+            + "  local _nixx_pids=() _nixx_ret=0\n"
+            + spawnLines
+            + waitLine
+            + "  return \"$_nixx_ret\"\n"
+            + "}\n";
         in
-        "task_${n}() {\n" + guard + depsLines + strictLine + envLines
-        + resetCwdLine + cwdLine + bodyRun + "}\n";
+        if isParallel then parallelFn
+        else "task_${n}() {\n" + guard + depsLines + strictLine + envLines
+          + resetCwdLine + cwdLine + bodyRun + "}\n";
       # dispatcher used by needs: maps a task name to its function.
       dispatch = "_nixx_run() {\n  case \"$1\" in\n"
         + concatStringsSep "" (map (n: "    ${n}) task_${n} ;;\n") names)
@@ -478,9 +525,11 @@ let
         taskAttrs;
       # resolve the source line where each task's body starts, for shellcheck remap
       lineOf = n:
-        let pos = builtins.unsafeGetAttrPos n taskAttrs;
-        in if pos == null then null
-        else bodyStartLine pos.file pos.line (full.${n}.rawBody or "");
+        if full.${n}.__parallel or false then null
+        else
+          let pos = builtins.unsafeGetAttrPos n taskAttrs;
+          in if pos == null then null
+          else bodyStartLine pos.file pos.line (full.${n}.rawBody or "");
       fileOf = n:
         let pos = builtins.unsafeGetAttrPos n taskAttrs;
         in if pos == null then null else pos.file;
@@ -661,6 +710,6 @@ let
 
 in
 {
-  inherit sh bash py uv bun ts node deno perl ruby lua mkBlock
+  inherit sh bash py uv bun ts node deno perl ruby lua mkBlock parallel
     mkTasks mkScript mkScripts shq dedent langProfiles;
 }

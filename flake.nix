@@ -228,6 +228,38 @@
               '') { deps = [ "check_global" "check_override" "check_merge" ]; };
             }).runner;
 
+        e2eParallel = mkE2e "e2e-parallel"
+          (nixx.mkTasks { name = "e2e-parallel"; } {
+            task_a = nixx.sh ''
+              echo "a-start"
+              sleep 0.05
+              echo "a-done" >> /tmp/nixx-parallel-$$
+            '';
+            task_b = nixx.sh ''
+              echo "b-start"
+              sleep 0.05
+              echo "b-done" >> /tmp/nixx-parallel-$$
+            '';
+            dev = nixx.parallel [ "task_a" "task_b" ];
+            verify = (nixx.sh ''
+              lines=$(wc -l < /tmp/nixx-parallel-$$)
+              rm -f /tmp/nixx-parallel-$$
+              test "$lines" -eq 2 \
+                || { echo "FAIL: expected 2 lines in output file, got $lines"; exit 1; }
+              echo "PASS: both parallel tasks completed"
+            '') { deps = [ "dev" ]; };
+            with_dep = nixx.sh ''export PARALLEL_SETUP=1'';
+            task_c = (nixx.sh ''
+              test "''${PARALLEL_SETUP:-}" = "1" \
+                || { echo "FAIL: dep did not run before parallel spawn"; exit 1; }
+              echo "PASS: dep runs before parallel spawn"
+            '');
+            dev_with_dep = (nixx.parallel [ "task_c" ]) { deps = [ "with_dep" ]; };
+            all = (nixx.sh ''
+              echo "=== e2e-parallel: ALL PASSED ==="
+            '') { deps = [ "verify" "dev_with_dep" ]; };
+          }).runner;
+
         e2eCircular = mkE2e "e2e-circular"
           (nixx.mkTasks { name = "e2e-circular"; } {
             circ_a = (nixx.sh ''export CIRC_A=1'') { deps = [ "circ_b" ]; };
@@ -466,6 +498,7 @@
           e2e-combo = e2eCombo;
           e2e-edge = e2eEdge;
           e2e-global-env = e2eGlobalEnv;
+          e2e-parallel = e2eParallel;
           e2e-circular = e2eCircular;
           e2e-args = e2eArgs;
           e2e-packages = e2ePackages;
