@@ -107,6 +107,34 @@ throws, on purpose.
 | `requirements` | per-block (uv) | PEP 723 inline deps |
 | `compile` | per-block (bun) | `bun --compile` → standalone binary |
 | `projectRoot` | per-block (uv/bun) | deps from `./pyproject.toml` / `package.json` |
+| `envCheck` | **global** (`mkTasks { }`) **or** per-block (bash tasks) | before running, parse the task body with tree-sitter and report unset / empty env vars; `false` = off (default), `true` = always, `"flag"` = only when runner is invoked with `--env-check` |
+
+`envCheck` can be set globally as the default for every bash task, then overridden
+per-block — a task with `envCheck = false` opts out even when the global is `true`:
+
+```nix
+with inputs.nixx.lib.for pkgs;
+mkTasks { name = "tasks"; envCheck = "flag"; } {   # ← default: run only with --env-check
+  build = bash ''
+    cp -r ./src "${OUT_DIR}/build"
+  '';                                               # ← inherits "flag" from global
+
+  deploy = bash ''
+    aws s3 sync ./dist "s3://${BUCKET}"
+  '' { envCheck = true; };                          # ← always check, even without --env-check
+
+  local = bash ''
+    echo "hi"
+  '' { envCheck = false; };                         # ← opt out entirely
+}
+# tasks build              → env check only when --env-check is passed
+# tasks --env-check build  → warns about OUT_DIR before running
+# tasks deploy             → always warns about BUCKET if unset
+```
+
+The check is **non-blocking** — it reports unset/empty variables on stderr and
+then runs the body regardless. `tree-sitter` is added to `runtimeInputs`
+automatically whenever any task opts in.
 
 The same call form attaches task options in `mkTasks`
 (`bash ''…'' { deps = [ … ]; env = { … }; cwd = ./d; }`). Everything else (full
