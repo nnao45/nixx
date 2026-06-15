@@ -354,7 +354,9 @@ let
   # themselves), e.g. a `setup` task that exports NIX_CONFIG. Because the runner
   # is one bash process, an `export` in such a task persists into every later
   # task body and any child interpreter it spawns.
-  mkRunnerText = name: defaultDeps: full: envCheckHookText: envCheckAlways:
+  # envCheckDefault is the global env-check mode (false | true | "flag") used as
+  # the fallback for any task that doesn't set its own `envCheck` block opt.
+  mkRunnerText = name: defaultDeps: full: envCheckHookText: envCheckDefault:
     let
       names = attrNames full;
       indentBody = t: concatStringsSep "\n"
@@ -421,7 +423,17 @@ let
             + "  _NIXX_DONE=\"$_NIXX_DONE ${n}\"\n";
           bodyRun = langRunner lang (stripShebang t.text);
           envCheckCall =
-            if envCheckHookText != "" && isBash && !isParallel
+            let
+              # per-task envCheck (true | false | "flag") overrides the global
+              # default; bad values are rejected so typos fail loudly.
+              ecv = t.envCheck or envCheckDefault;
+              ecMode =
+                if ecv == true then "always"
+                else if ecv == "flag" then "flag"
+                else if ecv == false then "off"
+                else throw "nixx: task '${n}' envCheck must be true | false | \"flag\"";
+            in
+            if envCheckHookText != "" && isBash && !isParallel && ecMode != "off"
             then
               let
                 eot = "_NIXX_CHK_${name}_${n}";
@@ -431,7 +443,7 @@ let
                   + checkBody + "\n"
                   + eot + "\n";
               in
-              if envCheckAlways then callLines
+              if ecMode == "always" then callLines
               else
                 "  if [[ \"$_NIXX_ENV_CHECK\" == \"1\" ]]; then\n"
                 + callLines
@@ -546,7 +558,7 @@ let
     , defaultDeps ? [ ]
     , env ? { }
     , envCheckHookText ? ""
-    , envCheckAlways ? true
+    , envCheckDefault ? false
     }: taskAttrs:
     let
       full = builtins.mapAttrs
@@ -571,7 +583,7 @@ let
     in
     {
       tasks = full;
-      runner = mkRunnerText name defaultDeps full envCheckHookText envCheckAlways;
+      runner = mkRunnerText name defaultDeps full envCheckHookText envCheckDefault;
       meta = map
         (n:
           let

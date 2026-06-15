@@ -57,13 +57,21 @@ rec {
     let
       name = opts.name or "tasks";
       pkgList = opts.packages or [ ];
-      # envCheck accepts three values:
-      #   false (default) — no env check, tree-sitter not in deps
-      #   true            — always run before every bash task
+      # envCheck accepts three values, set GLOBALLY here (applies to every bash
+      # task) AND/OR PER-BLOCK via `bash ''body'' { envCheck = ...; }`. A
+      # per-block value overrides the global default for that task:
+      #   false (default) — no env check for this task (also opts out of a global)
+      #   true            — always run before this bash task
       #   "flag"          — run only when the runner is invoked with --env-check
-      envCheckVal = opts.envCheck or false;
-      envCheckEnabled = envCheckVal != false;
-      envCheckAlways = envCheckVal == true;
+      envCheckVal =
+        let v = opts.envCheck or false; in
+        if v == false || v == true || v == "flag" then v
+        else throw "nixx.mkTasks: envCheck must be true | false | \"flag\"";
+      # the env-check function + tree-sitter dep are needed iff the global
+      # default OR any single block opts into env check.
+      anyTaskEnvCheck = lib.any (b: (b.envCheck or false) != false)
+        (builtins.attrValues taskDefs);
+      envCheckEnabled = envCheckVal != false || anyTaskEnvCheck;
       treeSitterBash = pkgs.tree-sitter-grammars.tree-sitter-bash;
       envCheckHookText =
         if !envCheckEnabled then ""
@@ -129,7 +137,10 @@ rec {
           }
         '';
       result = nixx.mkTasks
-        (lib.removeAttrs opts [ "packages" "envCheck" ] // { inherit envCheckHookText envCheckAlways; })
+        (lib.removeAttrs opts [ "packages" "envCheck" ] // {
+          inherit envCheckHookText;
+          envCheckDefault = envCheckVal;
+        })
         taskDefs;
       runtimeInputs = pkgList ++ lib.optional envCheckEnabled pkgs.tree-sitter;
       runner = pkgs.writeShellApplication {

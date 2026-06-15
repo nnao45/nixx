@@ -348,6 +348,23 @@ let
             echo "val=''${NIXX_FLAG_VAR:-<unset>}"
           '';
         };
+      # per-block envCheck: no global default, each task picks its own mode.
+      # `plain` opts out, `always` runs always, `flag` is gated on --env-check.
+      perTask = writersMkTasks
+        { name = "e2e-env-check-per-task"; }
+        {
+          plain = nixx.sh ''
+            echo "plain body ran"
+          '';
+          always = (nixx.sh ''
+            echo "always body ran"
+            echo "val=''${NIXX_PER_ALWAYS:-<unset>}"
+          '') { envCheck = true; };
+          flag = (nixx.sh ''
+            echo "flag body ran"
+            echo "val=''${NIXX_PER_FLAG:-<unset>}"
+          '') { envCheck = "flag"; };
+        };
     in
     pkgs.runCommand "e2e-env-check" { } ''
       set -euo pipefail
@@ -386,6 +403,7 @@ let
 
       always=${always.runner}/bin/e2e-env-check-always
       flag_r=${flag.runner}/bin/e2e-env-check-flag
+      per=${perTask.runner}/bin/e2e-env-check-per-task
       cerr() { local e; e=$("$@" 2>&1 >/dev/null); printf '%s' "$e"; }
 
       e=$(cerr "$always" unset)
@@ -416,6 +434,25 @@ let
 
       stdout=$("$flag_r" --env-check target 2>/dev/null)
       chk_has "flag-body" "flag task body ran" "$stdout"
+
+      # per-block envCheck: `plain` is unchecked (global is off + it opts out),
+      # `always` is checked unconditionally, `flag` only with --env-check.
+      e=$(cerr "$per" plain)
+      chk_not "per-plain-off" "nixx-env" "$e"
+      stdout=$("$per" plain 2>/dev/null)
+      chk_has "per-plain-body" "plain body ran" "$stdout"
+
+      e=$(cerr "$per" always)
+      chk_has "per-always-on" "nixx-env" "$e"
+      chk_has "per-always-var" "NIXX_PER_ALWAYS" "$e"
+      stdout=$("$per" always 2>/dev/null)
+      chk_has "per-always-body" "always body ran" "$stdout"
+
+      e=$(cerr "$per" flag)
+      chk_not "per-flag-off" "nixx-env" "$e"
+      e=$(cerr "$per" --env-check flag)
+      chk_has "per-flag-on" "nixx-env" "$e"
+      chk_has "per-flag-var" "NIXX_PER_FLAG" "$e"
 
       echo "=== e2e-env-check: ALL PASSED ==="
       touch "$out"
