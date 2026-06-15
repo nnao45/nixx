@@ -6,7 +6,7 @@
   # ${VAR} tax: `enterShell` and `scripts.<name>.exec` are Nix strings, so a
   # literal ${VAR} there still needs the ''${ } escape.
   #
-  # nixx is complementary. `with nixx.for pkgs;` gives the raw-shell API in one
+  # nixx is complementary. `with nixx.lib.for pkgs;` gives the raw-shell API in one
   # line; then drop the `tasks` runner into devenv's `packages`, and feed nixx
   # body `.text` into `enterShell` / `scripts.<name>.exec`. devenv keeps owning
   # the environment; nixx owns the scripting ergonomics.
@@ -22,7 +22,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        nx = nixx.for pkgs;
+        nx = nixx.lib.for pkgs;
       in
       with nx;
       let

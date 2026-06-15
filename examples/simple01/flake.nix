@@ -14,7 +14,7 @@
       in
       # one `with`: un-prefixes the constructors AND defers Nix's static
       # undefined-var check, so a bare ${VAR} in a source-read body is raw shell.
-      with nixx.for pkgs;
+      with nixx.lib.for pkgs;
       let
         apps = mkApps { packages = [ pkgs.uv pkgs.bun pkgs.nodejs ]; } {
           # ── bash: show dev-environment tool versions ──────────────────────

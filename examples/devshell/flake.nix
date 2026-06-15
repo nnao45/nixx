@@ -5,7 +5,7 @@
   # You already have `devShells.default`. You just want a `just`-style task
   # command in the shell, with task bodies written as RAW shell/JS — no ''${ }.
   #
-  # The whole wiring is ONE line: `with nixx.for pkgs;`. That single `with`
+  # The whole wiring is ONE line: `with nixx.lib.for pkgs;`. That single `with`
   #   • un-prefixes the API (bash / node / perl / mkApps / mkTasks / pkgs), and
   #   • defers Nix's undefined-variable check, so a bare ${VAR} in a body is the
   #     language's, resolved at runtime — no escaping, no '' tax.
@@ -20,7 +20,7 @@
 
   outputs = { nixpkgs, flake-utils, nixx, ... }:
     flake-utils.lib.eachDefaultSystem (system:
-      with nixx.for nixpkgs.legacyPackages.${system};
+      with nixx.lib.for nixpkgs.legacyPackages.${system};
       let
         apps = mkApps { } {
           whereami = bash ''

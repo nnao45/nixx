@@ -10,7 +10,7 @@ read from source, never escaped. No preprocessor, no codegen; files stay valid
 
 ```nix
 {
-  packages = with inputs.nixx.for pkgs; mkApps { packages = [ pkgs.rsync ]; } {
+  packages = with inputs.nixx.lib.for pkgs; mkApps { packages = [ pkgs.rsync ]; } {
     deploy = bash ''
       echo "deploying from ${HOME}"          # ${} is shell's — no ''${ } escape
       rsync -a ./dist/ "$HOST:/srv/"
@@ -26,7 +26,7 @@ read from source, never escaped. No preprocessor, no codegen; files stay valid
 ```nix
 inputs.nixx.url = "github:nnao45/nixx";
 # then, in a per-system output with `pkgs` in scope:
-#   { packages = with inputs.nixx.for pkgs; mkApps { } { hello = bash ''echo hi''; }; }
+#   { packages = with inputs.nixx.lib.for pkgs; mkApps { } { hello = bash ''echo hi''; }; }
 ```
 
 > Also speaks python (uv), typescript (bun/tsx), node, deno, perl, ruby, lua —
@@ -38,7 +38,7 @@ Every body passed as an attr value to `mkApps`, `mkTasks`, or `mkScripts` is
 read **from source** instead of evaluated, so a `${VAR}` in the `${}` family —
 shell `${HOME}`, a JS template `` `${x}` ``, a perl `${name}` — survives
 verbatim with **no `''` prefix**. The one line of ceremony is the `with`
-(`inputs.nixx.for pkgs` — the one canonical entry point): any
+(`inputs.nixx.lib.for pkgs` — the one canonical entry point): any
 `with` makes the scope dynamic, which defers Nix's static undefined-variable
 check to a runtime that never arrives (the body is never forced). To splice in
 an actual **Nix** value, use the `@nix(x)` / `@sh:q(x)` markers — native Nix
@@ -79,7 +79,7 @@ covers both `mkApps` (language opts like `compile`) and `mkTasks` (task opts
 like `deps` / `env` / `cwd`) — there is no separate `app` / `task` wrapper:
 
 ```nix
-with inputs.nixx.for pkgs;
+with inputs.nixx.lib.for pkgs;
 mkApps { packages = [ pkgs.curl pkgs.jq ]; } {   # ← packages is global (whole set)
   fetch = bash ''
     curl -s https://api.example.com | jq .
@@ -118,13 +118,13 @@ compose — app derivations go in the runner's `vars`, tasks call them with
 `@nix(name)`. Wired example in **[API.md](./API.md)**.
 
 ## devShell / devenv / mkShell — pick your idiom
-Same `with inputs.nixx.for pkgs;`, same zero-`${}`-tax bodies; only the wiring
+Same `with inputs.nixx.lib.for pkgs;`, same zero-`${}`-tax bodies; only the wiring
 differs. Runnable flakes in `examples/`.
 
 **`devShells.default`** (`examples/devshell`) — zero-config; the runner lands on
 PATH, tab-completed:
 ```nix
-with inputs.nixx.for pkgs;
+with inputs.nixx.lib.for pkgs;
 let
   apps  = mkApps { } { whereami = bash ''echo ${PWD} as ${USER}''; };
   tasks = mkTasks { name = "tasks"; } { info = bash ''echo ${PWD} as ${USER}''; };
@@ -137,7 +137,7 @@ in {
 **`pkgs.mkShell`** (`examples/mkshell`) — you keep full control; `extendShell`
 folds the runner into *your* shell:
 ```nix
-with inputs.nixx.for pkgs;
+with inputs.nixx.lib.for pkgs;
 let
   apps  = mkApps { packages = [ pkgs.jq ]; } { envcheck = bash ''jq --version''; };
   # nodejs is in mkTasks.packages because a TASK calls it — resolves via
@@ -150,8 +150,33 @@ in {
   devShells.default = tasks.extendShell (pkgs.mkShell {
     packages = [ pkgs.jq pkgs.ripgrep ];   # prompt-only — no task calls these
     # even the hook is ${}-tax-free:
-    shellHook = (mkTasks { } { h = bash ''echo "hi ${USER}"''; }).tasks.h.text;
+    shellHook = shellHook {
+      hook = bash ''
+        echo "hi ${USER}"
+      '';
+    };
   });
+}
+```
+
+For Nix APIs that want a raw bash string directly, use the thin wrappers:
+
+```nix
+with inputs.nixx.lib.for pkgs;
+
+pkgs.mkShell {
+  shellHook = shellHook {
+    hook = bash ''
+      echo ${HOME}
+    '';
+  };
+}
+
+runCommand "x" {} {
+  build = bash ''
+    echo ${HOME}
+    mkdir -p $out
+  '';
 }
 ```
 
@@ -159,7 +184,7 @@ in {
 scripting; feed body `.text` into `enterShell` / `scripts.<n>.exec` (Nix strings
 that would otherwise pay the `${}` tax):
 ```nix
-with inputs.nixx.for pkgs;
+with inputs.nixx.lib.for pkgs;
 let
   apps   = mkApps { } { hello = bash ''echo "ready, ${USER}"''; };
   tasks  = mkTasks { name = "tasks"; } { fmt = bash ''echo ${PWD}''; };

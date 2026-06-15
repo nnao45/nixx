@@ -13,7 +13,7 @@
         pkgs = import nixpkgs { inherit system; };
         n = nixx.lib;
         # pkgs-bound mkTasks (carries the global `packages` option + devShell).
-        w = nixx.writers pkgs;
+        w = nixx.lib.writers pkgs;
         mkE2e = name: runner:
           pkgs.writeShellApplication { inherit name; text = runner; };
       in
@@ -393,18 +393,20 @@
 
         devShells.default = pkgs.mkShell {
           packages = [ pkgs.shellcheck pkgs.nixpkgs-fmt ];
-          shellHook = ''
-            echo "nixx shell-hell-e2e"
-            echo "  nix run .#default          run all e2e tests"
-            echo "  nix run .#e2e-deps -- all  deps / diamond / guard"
-            echo "  nix run .#e2e-env -- all   env / PATH / cwd"
-            echo "  nix run .#e2e-strict -- all  cwd/options no-leak"
-            echo "  nix run .#e2e-combo -- all   parent→child export"
-            echo "  nix run .#e2e-edge -- all    empty / special chars / defaultDeps"
-            echo "  nix run .#e2e-circular -- all  circular deps"
-            echo "  nix run .#e2e-expansion -- all  bash ''${...} parameter-expansion zoo"
-            echo "  nix build .#e2e-packages      packages → runner PATH + devShell exposure"
-          '';
+          shellHook = with n; shellHook {
+            hook = bash ''
+              echo "nixx shell-hell-e2e"
+              echo "  nix run .#default          run all e2e tests"
+              echo "  nix run .#e2e-deps -- all  deps / diamond / guard"
+              echo "  nix run .#e2e-env -- all   env / PATH / cwd"
+              echo "  nix run .#e2e-strict -- all  cwd/options no-leak"
+              echo "  nix run .#e2e-combo -- all   parent→child export"
+              echo "  nix run .#e2e-edge -- all    empty / special chars / defaultDeps"
+              echo "  nix run .#e2e-circular -- all  circular deps"
+              echo "  nix run .#e2e-expansion -- all  bash ''${...} parameter-expansion zoo"
+              echo "  nix build .#e2e-packages      packages → runner PATH + devShell exposure"
+            '';
+          };
         };
       });
 }

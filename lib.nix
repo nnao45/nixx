@@ -6,7 +6,7 @@
 # the ${} family — survives VERBATIM with no '' prefix. The one rule Nix imposes
 # is a single line of ceremony at the call site:
 #
-#     with inputs.nixx.for pkgs;   # un-prefixes the constructors AND defers
+#     with inputs.nixx.lib.for pkgs;   # un-prefixes the constructors AND defers
 #                                  # Nix's static undefined-var check (any `with`
 #                                  # makes the scope dynamic; the source-read
 #                                  # body never forces it).
@@ -21,7 +21,7 @@
 # source to read, so it falls back to ordinary evaluation — there ${VAR} would
 # need the old ''${VAR} escape. The guard tells the two apart automatically.
 #
-#   with inputs.nixx.for pkgs;
+#   with inputs.nixx.lib.for pkgs;
 #   tasks = mkTasks { vars = { inherit port; }; } {
 #     dev = bash ''
 #       for d in */; do echo "$d"; done       # */ ok, $d raw
@@ -107,10 +107,10 @@ let
   # The remaining wall is Nix's STATIC undefined-variable check, which fires on
   # ${name} in a literal even when the string is never forced. That check is
   # deferred to runtime (i.e. never, for an unforced body) once the literal is
-  # under a `with` — and `with inputs.nixx.for pkgs;` is already that `with`. So
+  # under a `with` — and `with inputs.nixx.lib.for pkgs;` is already that `with`. So
   # the full incantation is:
   #
-  #     with inputs.nixx.for pkgs;
+  #     with inputs.nixx.lib.for pkgs;
   #     mkTasks { } { dev = bash '' echo ${HOME}; npm run dev ''; }
   #
   # The scanner below faithfully replays Nix's own indented-string escapes
@@ -305,24 +305,27 @@ let
   #   dev = parallel [ "frontend" "backend" ];
   #   dev = parallel [ "frontend" "backend" ] { deps = [ "setup" ]; };
   parallel = tasks:
-    let self = {
-      __sh = true;
-      __lang = "parallel";
-      __parallel = true;
-      parallel = tasks;
-      text = "";
-      rawBody = "";
-      indent = 0;
-      env = { };
-      cwd = null;
-      deps = [ ];
-      group = null;
-      description = null;
-      __functor = _self: opts:
-        if opts ? packages
-        then throw "nixx: per-block `packages` is not supported; use mkApps { packages = [...]; } { … } (or writers.mkTasks { packages = [...]; } { … }) to set PATH globally."
-        else self // opts;
-    }; in self;
+    let
+      self = {
+        __sh = true;
+        __lang = "parallel";
+        __parallel = true;
+        parallel = tasks;
+        text = "";
+        rawBody = "";
+        indent = 0;
+        env = { };
+        cwd = null;
+        deps = [ ];
+        group = null;
+        description = null;
+        __functor = _self: opts:
+          if opts ? packages
+          then throw "nixx: per-block `packages` is not supported; use mkApps { packages = [...]; } { … } (or writers.mkTasks { packages = [...]; } { … }) to set PATH globally."
+          else self // opts;
+      };
+    in
+    self;
 
   normalize = v:
     if isAttrs v && (v.__sh or false) then v
@@ -423,7 +426,8 @@ let
               pts = t.parallel;
               spawnLines = concatStringsSep ""
                 (map (pt: "  ( task_${pt} ) & _nixx_pids+=($!)\n") pts);
-              waitLine = if pts == [ ] then ""
+              waitLine =
+                if pts == [ ] then ""
                 else "  for _p in \"$" + "{_nixx_pids[@]}\"; do wait \"$_p\" || _nixx_ret=$?; done\n";
             in
             "task_${n}() {\n"
@@ -708,8 +712,31 @@ let
         (attrNames full);
     };
 
+  # shellHook: source-read one bash block and return its body text.
+  # This is the escape-free primitive for Nix APIs that want a raw bash string:
+  #
+  #   pkgs.mkShell {
+  #     shellHook = shellHook {
+  #       hook = bash ''
+  #         echo ${HOME}
+  #       '';
+  #     };
+  #   }
+  #
+  # Prefer the conventional `hook` attr, but accept any single attr so wrappers
+  # can read naturally, e.g. runCommand "x" {} { build = bash ''...''; }.
+  shellHook = hookAttrs:
+    let
+      names = attrNames hookAttrs;
+      name =
+        if hookAttrs ? hook then "hook"
+        else if length names == 1 then head names
+        else throw "nixx.shellHook: expected `{ hook = bash ''...''; }` or a single bash block attr";
+    in
+    (mkTasks { } hookAttrs).tasks.${name}.text;
+
 in
 {
   inherit sh bash py uv bun ts node deno perl ruby lua mkBlock parallel
-    mkTasks mkScript mkScripts shq dedent langProfiles;
+    mkTasks mkScript mkScripts shellHook shq dedent langProfiles;
 }
