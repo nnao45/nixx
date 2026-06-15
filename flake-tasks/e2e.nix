@@ -314,6 +314,7 @@ let
 
   e2eEnvCheck =
     let
+      # global envCheck = true: always check every bash task before running
       always = writersMkTasks
         {
           name = "e2e-env-check-always";
@@ -337,33 +338,21 @@ let
             echo "b=''${NIXX_CHK_DEDUP:-y}"
           '';
         };
-      flag = writersMkTasks
-        {
-          name = "e2e-env-check-flag";
-          envCheck = "flag";
-        }
-        {
-          target = nixx.sh ''
-            echo "flag task body ran"
-            echo "val=''${NIXX_FLAG_VAR:-<unset>}"
-          '';
-        };
-      # per-block envCheck: no global default, each task picks its own mode.
-      # `plain` opts out, `always` runs always, `flag` is gated on --env-check.
+      # per-task override: global true, per-task false → only with --env-check.
+      # Demonstrates that --env-check applies to ALL bash blocks in the runner.
       perTask = writersMkTasks
-        { name = "e2e-env-check-per-task"; }
+        { name = "e2e-env-check-per-task"; envCheck = true; }
         {
-          plain = nixx.sh ''
-            echo "plain body ran"
-          '';
-          always = (nixx.sh ''
+          # inherits global (true) → always check
+          always_task = nixx.sh ''
             echo "always body ran"
             echo "val=''${NIXX_PER_ALWAYS:-<unset>}"
-          '') { envCheck = true; };
-          flag = (nixx.sh ''
-            echo "flag body ran"
-            echo "val=''${NIXX_PER_FLAG:-<unset>}"
-          '') { envCheck = "flag"; };
+          '';
+          # per-task false → check only when --env-check is passed
+          cli_task = (nixx.sh ''
+            echo "cli body ran"
+            echo "val=''${NIXX_PER_CLI:-<unset>}"
+          '') { envCheck = false; };
         };
     in
     pkgs.runCommand "e2e-env-check" { } ''
@@ -402,57 +391,59 @@ let
       }
 
       always=${always.runner}/bin/e2e-env-check-always
-      flag_r=${flag.runner}/bin/e2e-env-check-flag
       per=${perTask.runner}/bin/e2e-env-check-per-task
-      cerr() { local e; e=$("$@" 2>&1 >/dev/null); printf '%s' "$e"; }
+      # cerr: run command, capture stderr, ignore exit code
+      cerr() { local e; e=$("$@" 2>&1 >/dev/null) || true; printf '%s' "$e"; }
 
+      # unset var → warns, task ABORTS (body never runs)
       e=$(cerr "$always" unset)
       chk_has "unset-name" "NIXX_CHK_UNSET" "$e"
       chk_has "unset-label" "UNSET" "$e"
+      chk_has "unset-abort" "aborting" "$e"
+      stdout=$("$always" unset 2>/dev/null) || true
+      chk_not "unset-no-body" "body ran" "$stdout"
 
-      stdout=$("$always" unset 2>/dev/null)
-      chk_has "nonblocking-and-trap-clean" "body ran" "$stdout"
-
+      # empty var → warns, task ABORTS (body never runs)
       e=$(cerr "$always" empty)
       chk_has "empty-name" "NIXX_CHK_EMPTY" "$e"
       chk_has "empty-label" "(empty)" "$e"
+      chk_has "empty-abort" "aborting" "$e"
+      stdout=$("$always" empty 2>/dev/null) || true
+      chk_not "empty-no-body" "body ran" "$stdout"
 
+      # set var → check passes, body runs
       e=$(cerr "$always" set)
       chk_has "set-name" "NIXX_CHK_SET" "$e"
       chk_has "set-value" "= hello nixx" "$e"
-      chk_not "set-no-warn" "WARN" "$e"
+      chk_not "set-no-error" "ERROR" "$e"
+      stdout=$("$always" set 2>/dev/null)
+      chk_has "set-body" "body ran" "$stdout"
 
+      # dedup: same unset var referenced twice → reported exactly once, then abort
       e=$(cerr "$always" dedup)
       chk_count "dedup" "NIXX_CHK_DEDUP" "$e" 1
 
-      e=$(cerr "$flag_r" target)
-      chk_not "flag-off" "nixx-env" "$e"
-
-      e=$(cerr "$flag_r" --env-check target)
-      chk_has "flag-on" "nixx-env" "$e"
-      chk_has "flag-var" "NIXX_FLAG_VAR" "$e"
-
-      stdout=$("$flag_r" --env-check target 2>/dev/null)
-      chk_has "flag-body" "flag task body ran" "$stdout"
-
-      # per-block envCheck: `plain` is unchecked (global is off + it opts out),
-      # `always` is checked unconditionally, `flag` only with --env-check.
-      e=$(cerr "$per" plain)
-      chk_not "per-plain-off" "nixx-env" "$e"
-      stdout=$("$per" plain 2>/dev/null)
-      chk_has "per-plain-body" "plain body ran" "$stdout"
-
-      e=$(cerr "$per" always)
+      # per-task: always_task (inherits global true) → always checks → aborts on unset
+      e=$(cerr "$per" always_task)
       chk_has "per-always-on" "nixx-env" "$e"
       chk_has "per-always-var" "NIXX_PER_ALWAYS" "$e"
-      stdout=$("$per" always 2>/dev/null)
-      chk_has "per-always-body" "always body ran" "$stdout"
+      chk_has "per-always-abort" "aborting" "$e"
+      stdout=$("$per" always_task 2>/dev/null) || true
+      chk_not "per-always-no-body" "always body ran" "$stdout"
 
-      e=$(cerr "$per" flag)
-      chk_not "per-flag-off" "nixx-env" "$e"
-      e=$(cerr "$per" --env-check flag)
-      chk_has "per-flag-on" "nixx-env" "$e"
-      chk_has "per-flag-var" "NIXX_PER_FLAG" "$e"
+      # per-task: cli_task (envCheck = false) → no check without --env-check → body runs
+      e=$(cerr "$per" cli_task)
+      chk_not "per-cli-off" "nixx-env" "$e"
+      stdout=$("$per" cli_task 2>/dev/null)
+      chk_has "per-cli-body" "cli body ran" "$stdout"
+
+      # per-task: --env-check forces check on ALL bash blocks, including cli_task → aborts
+      e=$(cerr "$per" --env-check cli_task)
+      chk_has "per-cli-flag-on" "nixx-env" "$e"
+      chk_has "per-cli-flag-var" "NIXX_PER_CLI" "$e"
+      chk_has "per-cli-flag-abort" "aborting" "$e"
+      stdout=$("$per" --env-check cli_task 2>/dev/null) || true
+      chk_not "per-cli-flag-no-body" "cli body ran" "$stdout"
 
       echo "=== e2e-env-check: ALL PASSED ==="
       touch "$out"

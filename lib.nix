@@ -354,7 +354,7 @@ let
   # themselves), e.g. a `setup` task that exports NIX_CONFIG. Because the runner
   # is one bash process, an `export` in such a task persists into every later
   # task body and any child interpreter it spawns.
-  # envCheckDefault is the global env-check mode (false | true | "flag") used as
+  # envCheckDefault is the global env-check mode (false | true) used as
   # the fallback for any task that doesn't set its own `envCheck` block opt.
   mkRunnerText = name: defaultDeps: full: envCheckHookText: envCheckDefault:
     let
@@ -424,16 +424,17 @@ let
           bodyRun = langRunner lang (stripShebang t.text);
           envCheckCall =
             let
-              # per-task envCheck (true | false | "flag") overrides the global
-              # default; bad values are rejected so typos fail loudly.
+              # per-task envCheck (true | false) overrides the global default;
+              # bad values are rejected so typos fail loudly.
+              # true  — always check before this task
+              # false — check only when the runner is invoked with --env-check
               ecv = t.envCheck or envCheckDefault;
-              ecMode =
-                if ecv == true then "always"
-                else if ecv == "flag" then "flag"
-                else if ecv == false then "off"
-                else throw "nixx: task '${n}' envCheck must be true | false | \"flag\"";
+              alwaysCheck =
+                if ecv == true then true
+                else if ecv == false then false
+                else throw "nixx: task '${n}' envCheck must be true | false";
             in
-            if envCheckHookText != "" && isBash && !isParallel && ecMode != "off"
+            if envCheckHookText != "" && isBash && !isParallel
             then
               let
                 eot = "_NIXX_CHK_${name}_${n}";
@@ -443,7 +444,7 @@ let
                   + checkBody + "\n"
                   + eot + "\n";
               in
-              if ecMode == "always" then callLines
+              if alwaysCheck then callLines
               else
                 "  if [[ \"$_NIXX_ENV_CHECK\" == \"1\" ]]; then\n"
                 + callLines
