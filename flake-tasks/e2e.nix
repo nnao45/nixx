@@ -312,6 +312,115 @@ let
       touch "$out"
     '';
 
+  e2eEnvCheck =
+    let
+      always = writersMkTasks
+        {
+          name = "e2e-env-check-always";
+          envCheck = true;
+        }
+        {
+          unset = nixx.sh ''
+            echo "body ran"
+            echo "val=''${NIXX_CHK_UNSET:-<unset>}"
+          '';
+          empty = (nixx.sh ''
+            echo "body ran"
+            echo "val=''${NIXX_CHK_EMPTY:-<empty>}"
+          '') { env = { NIXX_CHK_EMPTY = ""; }; };
+          set = (nixx.sh ''
+            echo "body ran"
+            echo "val=$NIXX_CHK_SET"
+          '') { env = { NIXX_CHK_SET = "hello nixx"; }; };
+          dedup = nixx.sh ''
+            echo "a=''${NIXX_CHK_DEDUP:-x}"
+            echo "b=''${NIXX_CHK_DEDUP:-y}"
+          '';
+        };
+      flag = writersMkTasks
+        {
+          name = "e2e-env-check-flag";
+          envCheck = "flag";
+        }
+        {
+          target = nixx.sh ''
+            echo "flag task body ran"
+            echo "val=''${NIXX_FLAG_VAR:-<unset>}"
+          '';
+        };
+    in
+    pkgs.runCommand "e2e-env-check" { } ''
+      set -euo pipefail
+
+      chk_has() {
+        local ctx="$1" needle="$2" hay="$3"
+        if ! printf '%s' "$hay" | grep -qF "$needle"; then
+          printf 'FAIL [%s]: expected to find: %s\n' "$ctx" "$needle" >&2
+          printf '%s\n%s\n' '--- stderr/stdout ---' "$hay" >&2
+          exit 1
+        fi
+        echo "PASS [$ctx]: found '$needle'"
+      }
+
+      chk_not() {
+        local ctx="$1" needle="$2" hay="$3"
+        if printf '%s' "$hay" | grep -qF "$needle"; then
+          printf 'FAIL [%s]: should not contain: %s\n' "$ctx" "$needle" >&2
+          printf '%s\n%s\n' '--- stderr/stdout ---' "$hay" >&2
+          exit 1
+        fi
+        echo "PASS [$ctx]: absent '$needle'"
+      }
+
+      chk_count() {
+        local ctx="$1" needle="$2" hay="$3" expected="$4" cnt
+        cnt=$(printf '%s' "$hay" | grep -cF "$needle" || true)
+        if [[ "$cnt" -ne "$expected" ]]; then
+          printf 'FAIL [%s]: expected %s occurrences of %s, got %s\n' \
+            "$ctx" "$expected" "$needle" "$cnt" >&2
+          printf '%s\n%s\n' '--- stderr/stdout ---' "$hay" >&2
+          exit 1
+        fi
+        echo "PASS [$ctx]: '$needle' appears exactly $expected time(s)"
+      }
+
+      always=${always.runner}/bin/e2e-env-check-always
+      flag_r=${flag.runner}/bin/e2e-env-check-flag
+      cerr() { local e; e=$("$@" 2>&1 >/dev/null); printf '%s' "$e"; }
+
+      e=$(cerr "$always" unset)
+      chk_has "unset-name" "NIXX_CHK_UNSET" "$e"
+      chk_has "unset-label" "UNSET" "$e"
+
+      stdout=$("$always" unset 2>/dev/null)
+      chk_has "nonblocking-and-trap-clean" "body ran" "$stdout"
+
+      e=$(cerr "$always" empty)
+      chk_has "empty-name" "NIXX_CHK_EMPTY" "$e"
+      chk_has "empty-label" "(empty)" "$e"
+
+      e=$(cerr "$always" set)
+      chk_has "set-name" "NIXX_CHK_SET" "$e"
+      chk_has "set-value" "= hello nixx" "$e"
+      chk_not "set-no-warn" "WARN" "$e"
+
+      e=$(cerr "$always" dedup)
+      chk_count "dedup" "NIXX_CHK_DEDUP" "$e" 1
+
+      e=$(cerr "$flag_r" target)
+      chk_not "flag-off" "nixx-env" "$e"
+
+      e=$(cerr "$flag_r" --env-check target)
+      chk_has "flag-on" "nixx-env" "$e"
+      chk_has "flag-var" "NIXX_FLAG_VAR" "$e"
+
+      stdout=$("$flag_r" --env-check target 2>/dev/null)
+      chk_has "flag-body" "flag task body ran" "$stdout"
+
+      echo "=== e2e-env-check: ALL PASSED ==="
+      touch "$out"
+    '';
+
   e2eWrappers =
     let
       nx = forPkgs pkgs;
@@ -343,6 +452,7 @@ in
     e2e-circular = e2eCircular;
     e2e-args = e2eArgs;
     e2e-packages = e2ePackages;
+    e2e-env-check = e2eEnvCheck;
     e2e-wrappers = e2eWrappers;
   };
 }

@@ -354,7 +354,7 @@ let
   # themselves), e.g. a `setup` task that exports NIX_CONFIG. Because the runner
   # is one bash process, an `export` in such a task persists into every later
   # task body and any child interpreter it spawns.
-  mkRunnerText = name: defaultDeps: full:
+  mkRunnerText = name: defaultDeps: full: envCheckHookText: envCheckAlways:
     let
       names = attrNames full;
       indentBody = t: concatStringsSep "\n"
@@ -420,6 +420,23 @@ let
           guard = "  case \" $_NIXX_DONE \" in *\" ${n} \"*) return 0 ;; esac\n"
             + "  _NIXX_DONE=\"$_NIXX_DONE ${n}\"\n";
           bodyRun = langRunner lang (stripShebang t.text);
+          envCheckCall =
+            if envCheckHookText != "" && isBash && !isParallel
+            then
+              let
+                eot = "_NIXX_CHK_${name}_${n}";
+                checkBody = chopNL (stripShebang t.text);
+                callLines =
+                  "  _nixx_env_check " + shq n + " <<'" + eot + "'\n"
+                  + checkBody + "\n"
+                  + eot + "\n";
+              in
+              if envCheckAlways then callLines
+              else
+                "  if [[ \"$_NIXX_ENV_CHECK\" == \"1\" ]]; then\n"
+                + callLines
+                + "  fi\n"
+            else "";
           # parallel task: spawn each listed task in a subshell, wait for all.
           parallelFn =
             let
@@ -442,7 +459,7 @@ let
         in
         if isParallel then parallelFn
         else "task_${n}() {\n" + guard + depsLines + strictLine + envLines
-          + resetCwdLine + cwdLine + bodyRun + "}\n";
+          + resetCwdLine + cwdLine + envCheckCall + bodyRun + "}\n";
       # dispatcher used by needs: maps a task name to its function.
       dispatch = "_nixx_run() {\n  case \"$1\" in\n"
         + concatStringsSep "" (map (n: "    ${n}) task_${n} ;;\n") names)
@@ -497,6 +514,11 @@ let
               ++ map groupSection allGroups;
           in
           concatStringsSep "\n  printf '\\n'\n" sections;
+      flagPreamble =
+        if envCheckHookText != "" then ''
+          _NIXX_ENV_CHECK=0
+          if [[ "''${1:-}" == "--env-check" ]]; then _NIXX_ENV_CHECK=1; shift; fi
+        '' else "";
     in
     ''
       #!/usr/bin/env bash
@@ -505,6 +527,8 @@ let
       _NIXX_DONE=""
       _NIXX_CWD="$PWD"
 
+      ${envCheckHookText}
+      ${flagPreamble}
       ${dispatch}
       ${concatStringsSep "\n" (map fnFor names)}
       case "''${1:-}" in
@@ -516,7 +540,14 @@ let
       esac
     '';
 
-  mkTasks = { name ? "tasks", vars ? { }, defaultDeps ? [ ], env ? { } }: taskAttrs:
+  mkTasks =
+    { name ? "tasks"
+    , vars ? { }
+    , defaultDeps ? [ ]
+    , env ? { }
+    , envCheckHookText ? ""
+    , envCheckAlways ? true
+    }: taskAttrs:
     let
       full = builtins.mapAttrs
         (n: v:
@@ -540,7 +571,7 @@ let
     in
     {
       tasks = full;
-      runner = mkRunnerText name defaultDeps full;
+      runner = mkRunnerText name defaultDeps full envCheckHookText envCheckAlways;
       meta = map
         (n:
           let

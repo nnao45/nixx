@@ -57,10 +57,84 @@ rec {
     let
       name = opts.name or "tasks";
       pkgList = opts.packages or [ ];
-      result = nixx.mkTasks (lib.removeAttrs opts [ "packages" ]) taskDefs;
+      # envCheck accepts three values:
+      #   false (default) — no env check, tree-sitter not in deps
+      #   true            — always run before every bash task
+      #   "flag"          — run only when the runner is invoked with --env-check
+      envCheckVal = opts.envCheck or false;
+      envCheckEnabled = envCheckVal != false;
+      envCheckAlways = envCheckVal == true;
+      treeSitterBash = pkgs.tree-sitter-grammars.tree-sitter-bash;
+      envCheckHookText =
+        if !envCheckEnabled then ""
+        else ''
+          _nixx_env_check() {
+            local _nixx_task="$1" _nixx_tmp _nixx_qf _nixx_ts_out
+            local _nixx_line _nixx_varname _nixx_row _nixx_scol _nixx_ecol
+            local _nixx_lineno _nixx_srcline _nixx_seen="" _nixx_val
+            local _nixx_old_re _nixx_new_re
+            # shellcheck disable=SC2016
+            _nixx_old_re='@ref:[[:space:]]*\[([0-9]+),[[:space:]]*([0-9]+)\][[:space:]]*-[[:space:]]*\[[0-9]+,[[:space:]]*([0-9]+)\]'
+            # shellcheck disable=SC2016
+            _nixx_new_re='capture:[^,]+,[[:space:]]*start:[[:space:]]*\(([0-9]+),[[:space:]]*([0-9]+)\),[[:space:]]*end:[[:space:]]*\([0-9]+,[[:space:]]*([0-9]+)\),[[:space:]]*text:[[:space:]]*`?([A-Za-z_][A-Za-z0-9_]*)`?'
+            _nixx_tmp=$(mktemp /tmp/nixx-env-XXXXXX.sh)
+            _nixx_qf=$(mktemp /tmp/nixx-qry-XXXXXX.scm)
+            cat > "$_nixx_tmp"
+            printf '(simple_expansion (variable_name) @ref)\n(expansion (variable_name) @ref)\n' \
+              > "$_nixx_qf"
+            if ! _nixx_ts_out=$(tree-sitter query \
+              --lib-path ${treeSitterBash}/parser \
+              --lang-name bash \
+              "$_nixx_qf" "$_nixx_tmp" 2>/dev/null); then
+              rm -f "$_nixx_tmp" "$_nixx_qf"
+              return 0
+            fi
+            printf 'nixx-env [%s]:\n' "$_nixx_task" >&2
+            while IFS= read -r _nixx_line; do
+              if [[ "$_nixx_line" =~ $_nixx_new_re ]]; then
+                _nixx_row="''${BASH_REMATCH[1]}"
+                _nixx_scol="''${BASH_REMATCH[2]}"
+                _nixx_ecol="''${BASH_REMATCH[3]}"
+                _nixx_varname="''${BASH_REMATCH[4]}"
+              elif [[ "$_nixx_line" =~ $_nixx_old_re ]]; then
+                _nixx_row="''${BASH_REMATCH[1]}"
+                _nixx_scol="''${BASH_REMATCH[2]}"
+                _nixx_ecol="''${BASH_REMATCH[3]}"
+                _nixx_lineno=$(( _nixx_row + 1 ))
+                _nixx_srcline=$(sed -n "''${_nixx_lineno}p" "$_nixx_tmp")
+                _nixx_varname="''${_nixx_srcline:$(( _nixx_scol )):$(( _nixx_ecol - _nixx_scol ))}"
+              else
+                continue
+              fi
+
+              _nixx_lineno=$(( _nixx_row + 1 ))
+              case " $_nixx_seen " in *" $_nixx_varname "*) continue ;; esac
+              _nixx_seen="$_nixx_seen $_nixx_varname"
+              if [[ -v "$_nixx_varname" ]]; then
+                _nixx_val="''${!_nixx_varname}"
+                if [[ -z "$_nixx_val" ]]; then
+                  printf '  line %-4s  $%-20s  (empty)  <- WARN\n' \
+                    "$_nixx_lineno" "$_nixx_varname" >&2
+                else
+                  printf '  line %-4s  $%-20s  = %s\n' \
+                    "$_nixx_lineno" "$_nixx_varname" "$_nixx_val" >&2
+                fi
+              else
+                printf '  line %-4s  $%-20s  UNSET    <- WARN\n' \
+                  "$_nixx_lineno" "$_nixx_varname" >&2
+              fi
+            done <<< "$_nixx_ts_out"
+            rm -f "$_nixx_tmp" "$_nixx_qf"
+            return 0
+          }
+        '';
+      result = nixx.mkTasks
+        (lib.removeAttrs opts [ "packages" "envCheck" ] // { inherit envCheckHookText envCheckAlways; })
+        taskDefs;
+      runtimeInputs = pkgList ++ lib.optional envCheckEnabled pkgs.tree-sitter;
       runner = pkgs.writeShellApplication {
         inherit name;
-        runtimeInputs = pkgList;
+        runtimeInputs = runtimeInputs;
         text = result.runner;
       };
       taskNames = lib.concatStringsSep " " (map (m: m.name) result.meta);
