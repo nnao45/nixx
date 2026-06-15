@@ -57,19 +57,18 @@ rec {
     let
       name = opts.name or "tasks";
       pkgList = opts.packages or [ ];
-      # envCheck accepts three values, set GLOBALLY here (applies to every bash
-      # task) AND/OR PER-BLOCK via `bash ''body'' { envCheck = ...; }`. A
-      # per-block value overrides the global default for that task:
-      #   false (default) — no env check for this task (also opts out of a global)
-      #   true            — always run before this bash task
-      #   "flag"          — run only when the runner is invoked with --env-check
+      # envCheck: set GLOBALLY here (applies to every bash task as default)
+      # AND/OR PER-BLOCK via `bash ''body'' { envCheck = ...; }`. A per-block
+      # value overrides the global default for that task:
+      #   false (default) — check only when the runner is invoked with --env-check
+      #   true            — always check before this bash task
       envCheckVal =
         let v = opts.envCheck or false; in
-        if v == false || v == true || v == "flag" then v
-        else throw "nixx.mkTasks: envCheck must be true | false | \"flag\"";
+        if v == false || v == true then v
+        else throw "nixx.mkTasks: envCheck must be true | false";
       # the env-check function + tree-sitter dep are needed iff the global
-      # default OR any single block opts into env check.
-      anyTaskEnvCheck = lib.any (b: (b.envCheck or false) != false)
+      # default OR any single block opts into always-check.
+      anyTaskEnvCheck = lib.any (b: (b.envCheck or false) == true)
         (builtins.attrValues taskDefs);
       envCheckEnabled = envCheckVal != false || anyTaskEnvCheck;
       treeSitterBash = pkgs.tree-sitter-grammars.tree-sitter-bash;
@@ -79,7 +78,7 @@ rec {
           _nixx_env_check() {
             local _nixx_task="$1" _nixx_tmp _nixx_qf _nixx_ts_out
             local _nixx_line _nixx_varname _nixx_row _nixx_scol _nixx_ecol
-            local _nixx_lineno _nixx_srcline _nixx_seen="" _nixx_val
+            local _nixx_lineno _nixx_srcline _nixx_seen="" _nixx_val _nixx_has_warn=0
             local _nixx_old_re _nixx_new_re
             # shellcheck disable=SC2016
             _nixx_old_re='@ref:[[:space:]]*\[([0-9]+),[[:space:]]*([0-9]+)\][[:space:]]*-[[:space:]]*\[[0-9]+,[[:space:]]*([0-9]+)\]'
@@ -123,6 +122,7 @@ rec {
                 if [[ -z "$_nixx_val" ]]; then
                   printf '  line %-4s  $%-20s  (empty)  <- WARN\n' \
                     "$_nixx_lineno" "$_nixx_varname" >&2
+                  _nixx_has_warn=1
                 else
                   printf '  line %-4s  $%-20s  = %s\n' \
                     "$_nixx_lineno" "$_nixx_varname" "$_nixx_val" >&2
@@ -130,9 +130,15 @@ rec {
               else
                 printf '  line %-4s  $%-20s  UNSET    <- WARN\n' \
                   "$_nixx_lineno" "$_nixx_varname" >&2
+                _nixx_has_warn=1
               fi
             done <<< "$_nixx_ts_out"
             rm -f "$_nixx_tmp" "$_nixx_qf"
+            if [[ "$_nixx_has_warn" -ne 0 ]]; then
+              printf 'nixx-env: aborting task %s — unset or empty vars above must be set\n' \
+                "$_nixx_task" >&2
+              return 1
+            fi
             return 0
           }
         '';
