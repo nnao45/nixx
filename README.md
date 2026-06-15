@@ -107,7 +107,7 @@ throws, on purpose.
 | `requirements` | per-block (uv) | PEP 723 inline deps |
 | `compile` | per-block (bun) | `bun --compile` → standalone binary |
 | `projectRoot` | per-block (uv/bun) | deps from `./pyproject.toml` / `package.json` |
-| `envCheck` | **global** (`mkTasks { }`) **or** per-block (bash tasks) | before running, parse the task body with tree-sitter and report unset / empty env vars; if any WARN is found, **abort** the task. `false` (default) = check only with `--env-check`, `true` = always check |
+| `envCheck` | **global** (`mkTasks { }`) **or** per-block (bash tasks) | before running, parse the task body with tree-sitter and report unset / empty env vars; if any ERROR is found, **abort** the task. `false` (default) = check only with `--env-check`, `true` = always check |
 
 `envCheck` can be set globally as the default for every bash task, then overridden
 per-block. `--env-check` passed to the runner runs the check on **all** bash blocks,

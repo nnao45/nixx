@@ -415,7 +415,7 @@ let
       e=$(cerr "$always" set)
       chk_has "set-name" "NIXX_CHK_SET" "$e"
       chk_has "set-value" "= hello nixx" "$e"
-      chk_not "set-no-warn" "WARN" "$e"
+      chk_not "set-no-error" "ERROR" "$e"
       stdout=$("$always" set 2>/dev/null)
       chk_has "set-body" "body ran" "$stdout"
 

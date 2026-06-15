@@ -120,7 +120,7 @@ rec {
               if [[ -v "$_nixx_varname" ]]; then
                 _nixx_val="''${!_nixx_varname}"
                 if [[ -z "$_nixx_val" ]]; then
-                  printf '  line %-4s  $%-20s  (empty)  <- WARN\n' \
+                  printf '  line %-4s  $%-20s  (empty)  <- ERROR\n' \
                     "$_nixx_lineno" "$_nixx_varname" >&2
                   _nixx_has_warn=1
                 else
@@ -128,7 +128,7 @@ rec {
                     "$_nixx_lineno" "$_nixx_varname" "$_nixx_val" >&2
                 fi
               else
-                printf '  line %-4s  $%-20s  UNSET    <- WARN\n' \
+                printf '  line %-4s  $%-20s  UNSET    <- ERROR\n' \
                   "$_nixx_lineno" "$_nixx_varname" >&2
                 _nixx_has_warn=1
               fi
