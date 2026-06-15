@@ -1470,6 +1470,165 @@ let
       expected = "echo \${ARR[-1]}\n";
     }
 
+    # ----------------------------------------------------------------
+    # parallel — concurrent task execution
+    # ----------------------------------------------------------------
+    {
+      name = "parallel: __sh=true";
+      got = (lib.parallel [ "a" "b" ]).__sh;
+      expected = true;
+    }
+
+    {
+      name = "parallel: __lang=parallel";
+      got = (lib.parallel [ "a" "b" ]).__lang;
+      expected = "parallel";
+    }
+
+    {
+      name = "parallel: __parallel=true";
+      got = (lib.parallel [ "a" "b" ]).__parallel;
+      expected = true;
+    }
+
+    {
+      name = "parallel: .parallel carries the task list";
+      got = (lib.parallel [ "a" "b" ]).parallel;
+      expected = [ "a" "b" ];
+    }
+
+    {
+      name = "parallel: empty list accepted";
+      got = (lib.parallel [ ]).__parallel;
+      expected = true;
+    }
+
+    {
+      name = "parallel: opts attached via __functor";
+      got = ((lib.parallel [ "a" "b" ]) { description = "run in parallel"; }).description;
+      expected = "run in parallel";
+    }
+
+    {
+      name = "parallel: deps attached via __functor";
+      got = ((lib.parallel [ "a" "b" ]) { deps = [ "setup" ]; }).deps;
+      expected = [ "setup" ];
+    }
+
+    {
+      name = "mkTasks runner: parallel task function emitted";
+      got = contains "task_dev() {"
+        (lib.mkTasks { } {
+          frontend = lib.sh "echo frontend\n";
+          backend = lib.sh "echo backend\n";
+          dev = lib.parallel [ "frontend" "backend" ];
+        }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: parallel task spawns subtasks in background";
+      got = contains "task_frontend ) &"
+        (lib.mkTasks { } {
+          frontend = lib.sh "echo frontend\n";
+          backend = lib.sh "echo backend\n";
+          dev = lib.parallel [ "frontend" "backend" ];
+        }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: parallel task spawns all listed subtasks";
+      got =
+        let r = (lib.mkTasks { } {
+          frontend = lib.sh "echo frontend\n";
+          backend = lib.sh "echo backend\n";
+          dev = lib.parallel [ "frontend" "backend" ];
+        }).runner;
+        in contains "task_frontend ) &" r && contains "task_backend ) &" r;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: parallel task has run-once guard";
+      got = contains "_NIXX_DONE"
+        (lib.mkTasks { } {
+          a = lib.sh "echo a\n";
+          all = lib.parallel [ "a" ];
+        }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: parallel task waits for pids";
+      got = contains "_nixx_pids"
+        (lib.mkTasks { } {
+          a = lib.sh "echo a\n";
+          all = lib.parallel [ "a" ];
+        }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: parallel task returns aggregated exit code";
+      got = contains "_nixx_ret"
+        (lib.mkTasks { } {
+          a = lib.sh "echo a\n";
+          all = lib.parallel [ "a" ];
+        }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: parallel task runs deps sequentially first";
+      got = contains "_nixx_run setup"
+        (lib.mkTasks { } {
+          setup = lib.sh "echo setup\n";
+          a = lib.sh "echo a\n";
+          all = (lib.parallel [ "a" ]) { deps = [ "setup" ]; };
+        }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks runner: parallel empty list produces no spawn lines";
+      got = contains "task_) &"
+        (lib.mkTasks { } {
+          none = lib.parallel [ ];
+        }).runner;
+      expected = false;
+    }
+
+    {
+      name = "mkTasks runner: sequential tasks still work alongside parallel";
+      got = contains "task_build() {"
+        (lib.mkTasks { } {
+          build = lib.sh "make\n";
+          test = lib.sh "cargo test\n";
+          ci = lib.parallel [ "build" "test" ];
+        }).runner;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks: parallel task accessible in .tasks";
+      got = (lib.mkTasks { } {
+        a = lib.sh "echo a\n";
+        all = lib.parallel [ "a" ];
+      }).tasks.all.__parallel;
+      expected = true;
+    }
+
+    {
+      name = "mkTasks: .meta still a list with parallel task";
+      got = isList
+        (lib.mkTasks { } {
+          a = lib.sh "echo a\n";
+          all = lib.parallel [ "a" ];
+        }).meta;
+      expected = true;
+    }
+
   ];
 
   run = t: if t.got == t.expected then null else t;
