@@ -1,11 +1,11 @@
 # nixx — full API & reference
 
-The [README](./README.md) covers the headline: raw shell (and the rest of the
-`${}` family) inside pure Nix via `with inputs.nixx.lib.for pkgs;`, the three
-dev-shell idioms, and the task runner. This file is everything else — the
-multi-language builders, `mkApps`, apps+tasks composition, dependency wiring,
-option tables, interpolation markers, the linter source-mapping, and the repo's
-own dev commands.
+The [README](./README.md) covers the headline: the two pillars (escape-light
+`${}` and `shellint`), the task runner, and one dev-shell idiom. This file is
+everything else — the multi-language builders, `mkApps`, apps+tasks composition,
+dependency wiring, the full option tables, the dev-shell wiring, `shellint` and
+`envCheck` in full, interpolation markers, the linter source-mapping, and the
+repo's own dev commands.
 
 ## Language constructors
 A block carries its own language as `__lang`; pick the constructor that reads
@@ -175,6 +175,70 @@ writeShellApplication {
 }
 ```
 
+## Dev shells — full wiring
+Same `with inputs.nixx.lib.for pkgs;` and zero-`${}`-tax bodies; only the wiring
+differs. The README shows the zero-config `tasks.devShell`; the other two idioms:
+
+**`pkgs.mkShell` + `extendShell`** — you keep full control; `extendShell` folds the
+runner into *your* shell. It **overrides** the shell you pass, so its bare env vars
+and `shellHook` survive (it does not merely pull build inputs):
+```nix
+with inputs.nixx.lib.for pkgs;
+let
+  apps  = mkApps { packages = [ pkgs.jq ]; } { envcheck = bash ''jq --version''; };
+  # nodejs is in mkTasks.packages because a TASK calls it — resolves via
+  # `nix run .#tasks` AND at the prompt (single source of truth).
+  tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs ]; } {
+    build = bash ''echo ${OUT_DIR:-dist}'';
+  };
+in {
+  packages = apps // { default = tasks.runner; };
+  devShells.default = tasks.extendShell (pkgs.mkShell {
+    packages  = [ pkgs.jq pkgs.ripgrep ];   # prompt-only — no task calls these
+    FOO       = "bar";                       # ← preserved (extendShell keeps it)
+    shellHook = shellHook { hook = bash ''echo "hi ${USER}"''; };  # ← preserved
+  });
+}
+```
+
+**devenv** — devenv owns the environment, nixx owns the scripting; feed a body's
+`.text` into `enterShell` / `scripts.<n>.exec` (Nix strings that would otherwise
+pay the `${}` tax):
+```nix
+with inputs.nixx.lib.for pkgs;
+let
+  apps   = mkApps  { }                 { hello = bash ''echo "ready, ${USER}"''; };
+  tasks  = mkTasks { name = "tasks"; } { fmt   = bash ''echo ${PWD}''; };
+  bodies = mkTasks { }                 { enter = bash ''echo "ready, ${USER}"''; };
+in {
+  packages = apps // { default = tasks.runner; };
+  devShells.default = devenv.lib.mkShell {  # + inherit inputs pkgs; — see examples/devenv
+    modules = [{
+      packages   = [ tasks.runner ];
+      enterShell = bodies.tasks.enter.text;   # ${USER} stays raw
+    }];
+  };
+}
+```
+
+**`shellHook` / `runCommand` wrappers** accept a reserved `vars` attr for
+`@nix()` / `@sh:q()` interpolation. `runCommand` bodies are **shellcheck-gated by
+default** (the lint runs as a build dependency, so a finding fails the build);
+`$out`/`$src`-style build-env refs are excluded automatically — opt out per call
+with `shellcheck = false`, or allow specific codes with
+`excludeShellChecks = [ "SC2086" ]`:
+```nix
+with inputs.nixx.lib.for pkgs;
+runCommand "x" {} {
+  vars  = { url = "https://example.com"; };
+  build = bash ''
+    echo ${HOME}
+    curl @sh:q(url)        # @sh:q() = shell-quoted Nix value; ${HOME} = raw shell
+    mkdir -p $out
+  '';
+}
+```
+
 ## Task runner — full reference
 The README shows the concise version. `writers.mkTasks` (pkgs-bound) returns a
 ready-to-use derivation plus devShell helpers:
@@ -262,6 +326,49 @@ argv (`sys.argv[1:]` in Python, `@ARGV` in Perl, `ARGV` in Ruby, `Deno.args`
 in Deno, `process.argv` in Bun). Node (`--input-type=module`) and TypeScript
 (`tsx`) do not currently receive positional args; pass data to those via `env`.
 
+## `envCheck` — runtime env-check (the `mkTasks` sibling of `shellint`)
+`envCheck` is a `mkTasks` option that, **before a task body runs**, parses it with
+tree-sitter and **aborts** if a *required* env var is unset or empty. It is the
+runtime counterpart to `shellint`'s static `env` pass: `shellint` reports what a
+block needs; `envCheck` enforces it at run time, where the actual environment is
+known.
+
+```nix
+with inputs.nixx.lib.for pkgs;
+mkTasks { name = "tasks"; envCheck = true; } {   # global default for every bash task
+  build  = bash ''cp -r ./src "${OUT_DIR}/build"'';         # inherits global (always)
+  deploy = bash ''aws s3 sync ./dist "s3://${BUCKET}"''
+           { envCheck = false; };                           # only with --env-check
+}
+# tasks build              → always checks; aborts if OUT_DIR unset/empty
+# tasks deploy             → checks only when --env-check is passed
+# tasks --env-check deploy → checks and aborts if BUCKET unset/empty
+# tasks --env-list deploy  → just prints the env deploy needs (set/unset/empty), runs nothing
+```
+
+`envCheck` is `false` by default (check only when the runner gets `--env-check`),
+or `true` to always check; a per-block value overrides the global default.
+`--env-list <task>` is the non-blocking companion — it prints exactly the env a
+task needs (with each var's live status) and exits without running deps or the
+body. It is **always available** (even with no task enabling `envCheck`), so
+`tree-sitter` ships in every runner.
+
+**What counts as "required"** — a free-variable analysis, not a grep. A var is
+required only if the block references it *bare* and never binds it itself:
+
+| in the body | treated as | why |
+|---|---|---|
+| `$VAR` / `${VAR}` | **required** (set & non-empty) | a bare reference is an external dependency |
+| `${VAR:?msg}` / `${VAR?msg}` | **required** ( `:?` also rejects empty ) | the author declared it mandatory |
+| `${VAR:-x}` `${VAR:=x}` `${VAR:+x}` `${VAR-x}` | skipped | a default handles the missing case — also the **opt-out**: `${VAR:-}` allows empty |
+| `${#VAR}` `${!VAR}` `${VAR#p}` `${VAR%p}` … | skipped | length / indirection / transforms, not a plain dependency |
+| `${A:-$B}` (nested) | neither A nor B | `B` is only the fallback value |
+| `VAR=…`, `export VAR`, `for VAR in …`, `read VAR` | skipped | the block assigns it, so it isn't external |
+
+Because bare references to external env are intentional under `envCheck`, enabling
+it also tells `shellcheck` to stop flagging them (`SC2154` / `SC2153`) for that
+runner.
+
 ## Interpolation (`vars`)
 To splice an actual **Nix** value into a (source-read) body, use a marker —
 native Nix `${…}` does not run there. There are exactly two:
@@ -281,6 +388,41 @@ mkTasks { vars = { port = 3000; tool = ./bin/tool; }; } {
   '';
 }
 ```
+
+## `shellint` — full reference
+`shellint` is **source-driven**: it reads `.nix` files with tree-sitter-nix (no
+eval — so a parse error in one file doesn't stop it), locates every nixx block
+(`bash`/`sh`/… constructor applied to an `''…''` body), and runs three
+block-scoped passes. Plain Nix `''…''` strings that aren't nixx blocks are
+ignored.
+
+| pass | severity | what it does |
+|---|---|---|
+| **nix-boundary** | fatal | shell-only expansions that break Nix (`${#x}` `${x[@]}` `${x^^}` `${x%p}` …) must be `''${…}`; a bare `${VAR}` with no enclosing `with` will fail Nix eval. Escaped `''${…}`, `with`-scoped `${VAR}`, and real Nix interpolations (`${pkgs.hello}`) are skipped. tree-sitter-nix ERROR nodes localise the breakage even through parse cascades |
+| **shellcheck** | fatal | the bash body (wrapped in a function, so `local`/`return` are valid) is shellcheck'd. `$out`/`$src`-style build-env refs (`SC2154` / `SC2153`) are excluded by default; more via `excludeShellChecks` |
+| **env** | warn | lists the external env each block requires (block-bound names subtracted), reusing the `envCheck` classifier; never fatal |
+
+Findings print as `file:line:col [pass] severity message`; a fatal makes the run
+exit nonzero (and the `check` derivation fail).
+
+```sh
+nix run nixx#shellint -- ./                       # lint a tree (default: cwd)
+nix run nixx#shellint -- --no-shellcheck a.nix b.nix
+nix run nixx#shellint -- --exclude=SC2086 src/    # add a shellcheck exclusion
+```
+```nix
+# as a flake check (gates `nix flake check`)
+checks.shellint = (inputs.nixx.lib.for pkgs).shellint {
+  src                = ./.;
+  exclude            = [ "*/vendor/*" ];        # find(1) path globs to skip
+  passes             = { nix = true; shellcheck = true; envcheck = false; };
+  excludeShellChecks = [ "SC2086" ];
+};
+```
+
+The engine ships in every `mkTasks` runner too (that's why `tree-sitter` is always
+a runtime input), and is exposed standalone as the `nixx#shellint` app. See
+`envCheck` above for the runtime sibling.
 
 ## Tooling: linter source-mapping
 `mkTasks` / `mkScripts` return a `meta` list (per block: `name`, `file`, `line`,
@@ -323,3 +465,5 @@ nix run .#tasks -- check   # mkTasks runner: report + validate (just-style deps)
 7. ✅ `mkApps` dispatcher + one runnable app per language in
    `examples/simple01`
 8. ✅ source-read `${}`-tax-free task/script bodies (175+ unit tests)
+9. ✅ `shellint` — source-driven static lint (nix-boundary + shellcheck + env)
+   over real `.nix`, with `envCheck`/`--env-list` as the runtime sibling

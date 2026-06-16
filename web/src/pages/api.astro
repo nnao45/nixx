@@ -59,8 +59,10 @@ const mkAppsReturns = [
 const mktasksOpts = [
   { name: "name", type: "str", default: "\"tasks\"", description: "Runner binary name (also the bash completion function name)." },
   { name: "packages", type: "[ drv ]", default: "[ ]", description: "Global — baked into the runner's <code>runtimeInputs</code> <strong>and</strong> re-exposed on the <code>devShell</code>/<code>extendShell</code> prompt. Single source of truth (see README)." },
+  { name: "inputsFrom", type: "[ drv ]", default: "[ ]", description: "Other derivations whose stdenv <strong>setup hooks + build inputs</strong> apply to the dev shell — for tools that need an env/stdenv hook, not just a binary on PATH." },
   { name: "vars", type: "attrset", default: "{ }", description: "Nix values for <code>@nix(…)</code> markers." },
   { name: "env", type: "attrset", default: "{ }", description: "Exported in <strong>every</strong> task body." },
+  { name: "envCheck", type: "bool", default: "false", description: "Global default for every bash task: abort before a body runs if a <em>required</em> env var is unset/empty. <code>false</code> = check only with <code>--env-check</code>; <code>true</code> = always. Per-block overrides; <code>--env-list &lt;task&gt;</code> prints needs without running." },
   { name: "defaultDeps", type: "[ str ]", default: "[ ]", description: "Task names run before every task; the default-dep tasks themselves are exempt (no loop)." },
 ];
 const mktasksReturns = [
@@ -77,6 +79,20 @@ const taskOpts = [
   { name: "deps", type: "[ str ]", default: "[ ]", description: "Prerequisite task names (just-style; each runs at most once per invocation)." },
   { name: "env", type: "attrset", default: "{ }", description: "Exported before the body; merged with the runner's global <code>env</code>, per-task wins on conflict." },
   { name: "cwd", type: "path | null", default: "null", description: "Working dir. The runner resets to the invocation dir, then <code>cd</code>s here — a dep's <code>cwd</code> never leaks in." },
+  { name: "envCheck", type: "bool", default: "(global)", description: "Override the runner's <code>envCheck</code> default for this task: <code>true</code> = always check, <code>false</code> = only with <code>--env-check</code>." },
+];
+
+// shellint — static lint passes (sourced from shellint.sh)
+const shellintPasses = [
+  { name: "nix-boundary", type: "fatal", description: "Shell-only expansions that break Nix (<code>${`{#x}`}</code> <code>${`{x[@]}`}</code> <code>${`{x^^}`}</code> …) must be <code>''${`{…}`}</code>; a bare <code>${`{VAR}`}</code> with no enclosing <code>with</code> fails Nix eval. Escaped <code>''${`{…}`}</code>, <code>with</code>-scoped <code>${`{VAR}`}</code>, and real Nix interpolations are skipped." },
+  { name: "shellcheck", type: "fatal", description: "The bash body (function-wrapped, so <code>local</code> is valid) is shellcheck'd. <code>$out</code>/<code>$src</code> refs (<code>SC2154</code>/<code>SC2153</code>) excluded by default; more via <code>excludeShellChecks</code>." },
+  { name: "env", type: "warn", description: "Lists the external env each block requires (block-bound names subtracted). Never fatal." },
+];
+const shellintConfig = [
+  { name: "src", type: "path", default: "—", description: "Tree (or file) to lint; dirs are walked for <code>*.nix</code>." },
+  { name: "exclude", type: "[ str ]", default: "[ ]", description: "find(1) path globs to skip." },
+  { name: "passes", type: "attrset", default: "{ all = true }", description: "Toggle passes: <code>{ nix; shellcheck; envcheck; }</code>." },
+  { name: "excludeShellChecks", type: "[ str ]", default: "[ ]", description: "Extra shellcheck codes to ignore." },
 ];
 
 const mktasksPureOpts = [
@@ -120,6 +136,7 @@ const toc = [
   ["mktasks-pure", "nixx.mkTasks (pure)"],
   ["mkscript", "mkScript / mkScripts"],
   ["vars", "Vars markers"],
+  ["shellint", "shellint"],
   ["scope", "for pkgs"],
 ];
 ---
@@ -286,6 +303,17 @@ const toc = [
           <h2 class="font-mono text-xl font-semibold tracking-tight">Vars markers</h2>
           <p class="mt-2 text-neutral-600 dark:text-neutral-400">Splice an actual Nix value into a source-read body — native <code class="font-mono text-amber-600 dark:text-amber-400">${`{…}`}</code> does not run there. Values come from <code class="font-mono text-amber-600 dark:text-amber-400">vars = &#123; … &#125;</code> on <code class="font-mono text-amber-600 dark:text-amber-400">mkApps</code>/<code class="font-mono text-amber-600 dark:text-amber-400">mkTasks</code>/<code class="font-mono text-amber-600 dark:text-amber-400">mkScript</code>.</p>
           <OptionTable options={varsMarkers} />
+        </section>
+
+        <!-- shellint -->
+        <section id="shellint" class="mt-12 scroll-mt-20">
+          <h2 class="font-mono text-xl font-semibold tracking-tight">shellint</h2>
+          <p class="mt-2 font-mono text-sm text-neutral-500 dark:text-neutral-400">nix run nixx#shellint -- ./ &nbsp;·&nbsp; (for pkgs).shellint &#123; src = ./.; … &#125;</p>
+          <p class="mt-2 text-neutral-600 dark:text-neutral-400">Source-driven static lint (no eval): tree-sitter-nix locates every <code class="font-mono text-amber-600 dark:text-amber-400">bash ''…''</code> block and runs three block-scoped passes. It's the static half of the pair — the runtime sibling is the <code class="font-mono text-amber-600 dark:text-amber-400">envCheck</code> option above.</p>
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">passes</h3>
+          <OptionTable options={shellintPasses} />
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">config (check builder)</h3>
+          <OptionTable options={shellintConfig} />
         </section>
 
         <!-- scope -->

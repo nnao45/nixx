@@ -1,12 +1,19 @@
-# nixx — Write real shell, JavaScript, Python, and TypeScript inside Nix — without escaping ${}.
+# nixx — raw shell in Nix: escape-light *and* statically checked.
 
 [![release](https://img.shields.io/github/v/release/nnao45/nixx?logo=github&label=release&color=5277C3)](https://github.com/nnao45/nixx/releases/latest)
 [![nix flake check](https://github.com/nnao45/nixx/actions/workflows/nix-version-compat.yml/badge.svg)](https://github.com/nnao45/nixx/actions/workflows/nix-version-compat.yml)
 [![Nix ≥ 2.18](https://img.shields.io/badge/nix-%E2%89%A52.18-5277C3?logo=nixos)](https://nixos.org/download/)
 
-One `with`, and a `${VAR}` in a script body is the **shell's**, not Nix's —
-read from source, never escaped. No preprocessor, no codegen; files stay valid
-`.nix`, so nil/nixd never error.
+nixx stands on **two pillars that need each other**:
+
+1. **Escape-light.** One `with`, and a `${VAR}` in a script body is the
+   **shell's**, not Nix's — read from source, never escaped. No preprocessor, no
+   codegen; files stay valid `.nix`, so nil/nixd never error.
+2. **Statically checked.** That raw embedded shell would otherwise be opaque to
+   your tools. `shellint` reads it back — running shellcheck on the body **and**
+   guarding the one boundary the escape-light path leaves behind: the few `${…}`
+   forms that *do* still need an `''` escape, and bare `${VAR}` that needs a
+   `with`. Skip the escaping; let shellint point at whatever you missed.
 
 ```nix
 {
@@ -18,9 +25,13 @@ read from source, never escaped. No preprocessor, no codegen; files stay valid
   };
 }
 ```
+```sh
+nix run .#deploy            # ships a /nix/store/.../bin/deploy
+nix run nixx#shellint -- .  # lint the embedded shell: boundary + shellcheck + env
+```
 
-`nix run .#deploy` ships a `/nix/store/.../bin/deploy`. Swap `mkApps` for
-`mkTasks` when you want a tab-completed `tasks build` / `tasks check` workflow.
+Swap `mkApps` for `mkTasks` when you want a tab-completed `tasks build` /
+`tasks check` workflow.
 
 **Add to your flake:**
 ```nix
@@ -31,23 +42,21 @@ inputs.nixx.url = "github:nnao45/nixx";
 
 > Also speaks python (uv), typescript (bun/tsx), node, deno, perl, ruby, lua —
 > and bundles dev workflows with `mkTasks`. Full reference, dependency wiring,
-> and option tables in **[API.md](./API.md)**.
+> and every option table in **[API.md](./API.md)**.
 
-## `${}` — what's raw, what's constrained
-Every body passed as an attr value to `mkApps`, `mkTasks`, or `mkScripts` is
-read **from source** instead of evaluated, so a `${VAR}` in the `${}` family —
-shell `${HOME}`, a JS template `` `${x}` ``, a perl `${name}` — survives
-verbatim with **no `''` prefix**. The one line of ceremony is the `with`
-(`inputs.nixx.lib.for pkgs` — the one canonical entry point): any
-`with` makes the scope dynamic, which defers Nix's static undefined-variable
-check to a runtime that never arrives (the body is never forced). To splice in
-an actual **Nix** value, use the `@nix(x)` / `@sh:q(x)` markers — native Nix
-`${…}` does not run in a source-read body, by design: `${}` belongs to the
-language.
+## Pillar 1 — `${}` belongs to the language
+Every body passed as an attr value to `mkApps`, `mkTasks`, or `mkScripts` is read
+**from source** instead of evaluated, so a `${VAR}` in the `${}` family — shell
+`${HOME}`, a JS template `` `${x}` ``, a perl `${name}` — survives verbatim with
+**no `''` prefix**. The one line of ceremony is the `with`
+(`inputs.nixx.lib.for pkgs` — the canonical entry point): any `with` makes the
+scope dynamic, deferring Nix's static undefined-variable check to a runtime that
+never arrives (the body is never forced). To splice in an actual **Nix** value,
+use the `@nix(x)` / `@sh:q(x)` markers — native Nix `${…}` does not run in a
+source-read body, by design: `${}` belongs to the language.
 
-The common shell forms work with zero prefix; a few aren't valid Nix inside
-`${…}`, so Nix rejects them at *parse* time (before any source read) and they
-still need the `''` — which the scanner replays back to a literal `$`:
+The common shell forms work with zero prefix. A few aren't valid Nix inside
+`${…}`, so Nix rejects them at *parse* time and they still need the `''`:
 
 | form | zero prefix? | example |
 |---|---|---|
@@ -55,126 +64,35 @@ still need the `''` — which the scanner replays back to a literal `$`:
 | `${VAR:-d}` `${VAR:-}` `${VAR:=d}` `${VAR:?e}` `${VAR:+x}` | ✅ | `echo ${EDITOR:-vi}` |
 | `${VAR:off:len}` (substring) | ✅ | `echo ${name:0:3}` |
 | `${!ref}` (indirect) `${ARR[0]}` (numeric index) | ✅ | `echo ${!chosen}` |
-| `${VAR/old/new}` `${VAR//o/n}` (operands are identifier-only) | ✅ | `echo ${PATH//bin/BIN}` |
-| `${ARR[@]}` `${ARR[*]}` `${#VAR}` `${VAR%x}` `${VAR#x}` `${VAR^^}` `${VAR,,}` `${ARR[-1]}` | ❌ use `''` | `for x in ''${ARR[@]}; do …` |
-| `${VAR/o/n}` whose old/new carries `, ; # %` etc. | ❌ use `''` | `''${csv/,/;}` |
+| `${VAR/old/new}` (operands identifier-only) | ✅ | `echo ${PATH//bin/BIN}` |
+| `${ARR[@]}` `${#VAR}` `${VAR%x}` `${VAR#x}` `${VAR^^}` `${VAR,,}` `${ARR[-1]}` | ❌ use `''` | `for x in ''${ARR[@]}; do …` |
+| `${VAR/o/n}` whose operand carries `, ; # %` etc. | ❌ use `''` | `''${csv/,/;}` |
 
-Rule of thumb: anything lexically valid as a Nix expression inside `${…}`
-(the `:` / `:off:len` / `!` / `[n]` / identifier-only `/` families) survives
-**raw**; a token Nix can't lex (`@ * # % ^`, a negative index, or a symbol in
-a substitution operand) hits the *parse* wall first and needs `''`. 
+The escape-light path is **partial by design** — and that's exactly the gap
+Pillar 2 closes: **forget an `''` on a ❌ row, or write a bare `${VAR}` with no
+`with`, and `shellint` points at the precise `file:line`** instead of leaving you
+a cryptic Nix parse error. (Mechanism — lazy thunks, `unsafeGetAttrPos`, the
+parse-wall rule — in [API.md](./API.md).)
 
-Still strictly better than a plain evaluated `''…''`, which needs `''` on
-*everything*. (Mechanism — lazy thunks, `unsafeGetAttrPos`, the literal-vs-
-programmatic guard — in [API.md](./API.md).)
+> **Trade-off.** Any `with` defers undefined-variable checking, so a typo in
+> *never-evaluated* code under its scope won't be caught statically — which is
+> the other reason `shellint` exists. Keep the `with` on the flake output that
+> builds your tasks; evaluated code still errors clearly at runtime.
 
-**Trade-off.** Any `with` defers undefined-variable checking, so a typo in
-*never-evaluated* code under its scope won't be caught statically. Keep the
-`with` on the flake output that builds your tasks; evaluated code still errors
-clearly at runtime.
-
-## Per-block options
-Call a block like a function with an attrset of options. This **one idiom**
-covers both `mkApps` (language opts like `compile`) and `mkTasks` (task opts
-like `deps` / `env` / `cwd`) — there is no separate `app` / `task` wrapper:
-
-```nix
-with inputs.nixx.lib.for pkgs;
-mkApps { packages = [ pkgs.curl pkgs.jq ]; } {   # ← packages is global (whole set)
-  fetch = bash ''
-    curl -s https://api.example.com | jq .
-  '';                                            # ← no opts needed
-
-  report = uv ''
-    from rich import print
-    print("[green]ok[/]")
-  '' { requirements = [ "rich>=13" ]; };          # ← per-block
-
-  check = bun ''
-    const r: { ok: boolean } = { ok: true };
-    console.log(`status: ${r.ok}`);
-  '' { compile = true; };                         # ← per-block
-}
-```
-
-One rule: **`packages` is global** (first attrset of `mkApps` / `mkTasks`); the
-language options are **per-block**. Passing `packages` per-block or per-task
-throws, on purpose.
-
-| option | level | what it does |
-|---|---|---|
-| `packages` | **global** — `mkApps { }` / `mkTasks { }` first attrset | `/bin` on PATH for **every** app/task |
-| `inputsFrom` | **global** (`mkTasks { }`) | apply other derivations' **setup hooks + build inputs** to the dev shell — for tools that need an stdenv hook (env/wiring), not just a binary on PATH. Keeps mkTasks the single source of truth |
-| `requirements` | per-block (uv) | PEP 723 inline deps |
-| `compile` | per-block (bun) | `bun --compile` → standalone binary |
-| `projectRoot` | per-block (uv/bun) | deps from `./pyproject.toml` / `package.json` |
-| `envCheck` | **global** (`mkTasks { }`) **or** per-block (bash tasks) | before running, parse the task body with tree-sitter and **abort** if a *required* env var is unset/empty. `false` (default) = check only with `--env-check`, `true` = always check |
-
-`envCheck` can be set globally as the default for every bash task, then overridden
-per-block. `--env-check` passed to the runner runs the check on **all** bash blocks,
-regardless of per-task settings:
-
-```nix
-with inputs.nixx.lib.for pkgs;
-mkTasks { name = "tasks"; envCheck = true; } {   # ← always check every bash task
-
-  build = bash ''
-    cp -r ./src "${OUT_DIR}/build"
-  '';                                             # ← inherits global (always)
-
-  deploy = bash ''
-    aws s3 sync ./dist "s3://${BUCKET}"
-  '' { envCheck = false; };                       # ← only with --env-check
-}
-# tasks build              → always checks; aborts if OUT_DIR unset/empty
-# tasks deploy             → checks only when --env-check is passed
-# tasks --env-check deploy → checks and aborts if BUCKET unset/empty
-# tasks --env-list deploy  → just prints the env deploy needs (set/unset/empty), runs nothing
-```
-
-The check is **blocking** — if a required variable is unset or empty, the task
-aborts before the body runs.
-
-`--env-list <task>` is the non-blocking companion: it prints exactly the env a
-task requires (with each var's live status) and exits without running deps or the
-body. It is **always available** — even on a runner where no task enables blocking
-`envCheck` — so `tree-sitter` ships in every runner.
-
-**What counts as "required"** — the check is a free-variable analysis, not a dumb
-grep. A var is required only if the block references it *bare* and never binds it
-itself:
-
-| in the body | treated as | why |
-|---|---|---|
-| `$VAR` / `${VAR}` | **required** (must be set & non-empty) | a bare reference is an external dependency |
-| `${VAR:?msg}` / `${VAR?msg}` | **required** ( `:?` also rejects empty ) | the author declared it mandatory |
-| `${VAR:-x}` `${VAR:=x}` `${VAR:+x}` `${VAR-x}` | skipped | a default/assignment handles the missing case — this is also the **opt-out**: write `${VAR:-}` to allow empty |
-| `${#VAR}` `${!VAR}` `${VAR#p}` `${VAR%p}` … | skipped | length / indirection / transforms, not a plain dependency |
-| `${A:-$B}` (nested) | neither A nor B | `B` is only the fallback value |
-| `VAR=…`, `export VAR`, `for VAR in …`, `read VAR` | skipped | the block assigns it, so it isn't external |
-
-Because bare references to external env vars are intentional here, enabling
-`envCheck` also tells `shellcheck` to stop flagging them (`SC2154` / `SC2153`) for
-that runner — `envCheck` becomes the runtime counterpart to the static check.
-
-The same call form attaches task options in `mkTasks`
-(`bash ''…'' { deps = [ … ]; env = { … }; cwd = ./d; }`). Everything else (full
-option matrix, `mkScript(s)`, `vars` markers) is in **[API.md](./API.md)**.
-
-## shellint — static lint for the shell↔Nix boundary
+## Pillar 2 — `shellint`: check the embedded shell
 `shellint` is a **source-driven** linter (no eval): it parses your `.nix` files
-with tree-sitter-nix, finds every `bash ''…''` block, and reports three classes
-of problem that a generic Nix linter can't — because only nixx knows the string
-is shell:
+with tree-sitter-nix, finds every `bash ''…''` block, and runs three passes that
+a generic Nix linter can't — because only nixx knows the string is shell:
 
-- **nix-boundary** (FATAL) — a shell-only expansion that breaks Nix (`${#x}`,
-  `${x[@]}`, `${x^^}` …) needs `''${…}`; a bare `${VAR}` with no enclosing `with`
-  will fail Nix eval. Escaped `''${…}`, `with`-scoped `${VAR}`, and real Nix
-  interpolations (`${pkgs.hello}`) are left alone.
-- **shellcheck** (FATAL) — the bash body is shellcheck'd (`$out`/`$src` style
+- **nix-boundary** (fatal) — the warden of Pillar 1's gap. A shell-only
+  expansion that breaks Nix (`${#x}`, `${x[@]}`, `${x^^}` …) needs `''${…}`; a
+  bare `${VAR}` with no enclosing `with` will fail Nix eval. Escaped `''${…}`,
+  `with`-scoped `${VAR}`, and real Nix interpolations (`${pkgs.hello}`) are left
+  alone. tree-sitter-nix pinpoints the breakage even through parse cascades.
+- **shellcheck** (fatal) — the bash body is shellcheck'd (`$out`/`$src`-style
   build-env refs excluded; add codes with `excludeShellChecks`).
 - **env** (warn) — lists the external env each block requires (block-bound names
-  subtracted), never fatal.
+  subtracted).
 
 ```sh
 nix run nixx#shellint -- ./           # lint a tree (or files)
@@ -189,105 +107,45 @@ checks.shellint = (inputs.nixx.lib.for pkgs).shellint {
 };
 ```
 
-## Apps and shells
-`mkApps` builds store binaries; `mkTasks` builds a just-style runner. They
-compose — app derivations go in the runner's `vars`, tasks call them with
-`@nix(name)`. Wired example in **[API.md](./API.md)**.
+Full pass semantics, config, and the runtime sibling `envCheck` (a `mkTasks`
+option that blocks a task when a required env var is unset) are in
+**[API.md](./API.md)**.
 
-## devShell / devenv / mkShell — pick your idiom
-Same `with inputs.nixx.lib.for pkgs;`, same zero-`${}`-tax bodies; only the wiring
-differs. Runnable flakes in `examples/`.
-
-**`devShells.default`** (`examples/devshell`) — zero-config; the runner lands on
-PATH, tab-completed:
-```nix
-with inputs.nixx.lib.for pkgs;
-let
-  apps  = mkApps { } { whereami = bash ''echo ${PWD} as ${USER}''; };
-  tasks = mkTasks { name = "tasks"; } { info = bash ''echo ${PWD} as ${USER}''; };
-in {
-  packages = apps // { default = tasks.runner; tasks = tasks.runner; };
-  devShells.default = tasks.devShell;
-}
-```
-
-**`pkgs.mkShell`** (`examples/mkshell`) — you keep full control; `extendShell`
-folds the runner into *your* shell:
-```nix
-with inputs.nixx.lib.for pkgs;
-let
-  apps  = mkApps { packages = [ pkgs.jq ]; } { envcheck = bash ''jq --version''; };
-  # nodejs is in mkTasks.packages because a TASK calls it — resolves via
-  # `nix run .#tasks` AND at the prompt (single source of truth; see API.md).
-  tasks = mkTasks { name = "tasks"; packages = [ pkgs.nodejs ]; } {
-    build = bash ''echo ${OUT_DIR:-dist}'';
-  };
-in {
-  packages = apps // { default = tasks.runner; };
-  devShells.default = tasks.extendShell (pkgs.mkShell {
-    packages = [ pkgs.jq pkgs.ripgrep ];   # prompt-only — no task calls these
-    # even the hook is ${}-tax-free:
-    shellHook = shellHook {
-      hook = bash ''
-        echo "hi ${USER}"
-      '';
-    };
-  });
-}
-```
-
-For Nix APIs that want a raw bash string directly, use the thin wrappers:
+## Per-block options
+Call a block like a function with an attrset of options. This **one idiom**
+covers both `mkApps` (language opts like `compile`) and `mkTasks` (task opts like
+`deps` / `env` / `cwd`) — there is no separate `app` / `task` wrapper:
 
 ```nix
 with inputs.nixx.lib.for pkgs;
-
-pkgs.mkShell {
-  shellHook = shellHook {
-    hook = bash ''
-      echo ${HOME}
-    '';
-  };
-}
-
-runCommand "x" {} {
-  vars  = { url = "https://example.com"; };  # optional @nix()/@sh:q() interpolation
-  build = bash ''
-    echo ${HOME}
-    curl @sh:q(url)
-    mkdir -p $out
-  '';
+mkApps { packages = [ pkgs.curl pkgs.jq ]; } {   # ← packages is global (whole set)
+  fetch  = bash ''curl -s https://api.example.com | jq .'';   # ← no opts needed
+  report = uv ''
+    from rich import print
+    print("[green]ok[/]")
+  '' { requirements = [ "rich>=13" ]; };          # ← per-block
+  check  = bun ''
+    const r: { ok: boolean } = { ok: true };
+    console.log(`status: ${r.ok}`);
+  '' { compile = true; };                         # ← per-block
 }
 ```
 
-`runCommand` bodies are **shellcheck-gated by default** (the lint runs as a build
-dependency, so a finding fails the build). `$out`/`$src`-style build-env refs are
-excluded automatically; opt out per call with `shellcheck = false`, or allow
-specific codes with `excludeShellChecks = [ "SC2086" ]`. `shellHook` / `runCommand`
-also accept a reserved `vars` attr for `@nix()` / `@sh:q()` interpolation.
+One rule: **`packages` is global** (first attrset of `mkApps` / `mkTasks`); the
+language options are **per-block**. Passing `packages` per-block throws, on purpose.
 
-`extendShell` folds the runner into *your* shell while **preserving its env vars
-and shellHook** (it overrides your shell rather than only pulling its build
-inputs).
+| option | level | what it does |
+|---|---|---|
+| `packages` | **global** | `/bin` on PATH for **every** app/task |
+| `inputsFrom` | **global** (`mkTasks`) | other derivations' setup hooks + build inputs in the dev shell (tools that need a stdenv hook, not just a binary) |
+| `requirements` | per-block (uv) | PEP 723 inline deps |
+| `compile` | per-block (bun) | `bun --compile` → standalone binary |
+| `projectRoot` | per-block (uv/bun) | deps from `./pyproject.toml` / `package.json` |
+| `envCheck` | **global** or per-block (bash) | block a task when a *required* env var is unset/empty; `--env-list <task>` just prints what it needs. Full semantics → [API.md](./API.md) |
 
-**devenv** (`examples/devenv`) — devenv owns the environment, nixx owns the
-scripting; feed body `.text` into `enterShell` / `scripts.<n>.exec` (Nix strings
-that would otherwise pay the `${}` tax):
-```nix
-with inputs.nixx.lib.for pkgs;
-let
-  apps   = mkApps { } { hello = bash ''echo "ready, ${USER}"''; };
-  tasks  = mkTasks { name = "tasks"; } { fmt = bash ''echo ${PWD}''; };
-  bodies = mkTasks { } { enter = bash ''echo "ready, ${USER}"''; };
-in {
-  packages = apps // { default = tasks.runner; };
-  devShells.default = devenv.lib.mkShell {  # + inherit inputs pkgs; — see examples/devenv
-    modules = [{
-      packages   = [ tasks.runner ];
-      enterShell = bodies.tasks.enter.text;   # ${USER} stays raw
-    }];
-  };
-}
-```
+The same call form attaches task options in `mkTasks`
+(`bash ''…'' { deps = [ … ]; env = { … }; cwd = ./d; }`). Full option matrix,
+`mkScript(s)`, and `vars` markers are in **[API.md](./API.md)**.
 
 ## Task runner
 `mkTasks` is a `just`-style runner: one `tasks <name>` is a **single bash
@@ -308,18 +166,35 @@ release:
 $ tasks build      # or: nix run .#tasks -- build
 ```
 
-`packages` is global on `mkTasks` — same rule as `mkApps` (see
-[Per-block options](#per-block-options)). **One trap:** if a task calls a tool, put
-it in `mkTasks { packages }`, never only in `mkShell` — a `mkShell`-only package
-is absent from `nix run .#tasks`, so the task works under `nix develop` but
-breaks as a shipped binary. Full options and `env`/`deps` semantics in
-**[API.md](./API.md)**.
+**One trap:** if a task calls a tool, put it in `mkTasks { packages }`, never only
+in `mkShell` — a `mkShell`-only package is absent from `nix run .#tasks`. Full
+`env`/`deps` semantics and the `writers.mkTasks` return value (`runner` /
+`devShell` / `extendShell`) in **[API.md](./API.md)**.
+
+## Dev shells — pick your idiom
+Same `with inputs.nixx.lib.for pkgs;`, same zero-`${}`-tax bodies; only the wiring
+differs. The zero-config path lands the runner on PATH, tab-completed:
+
+```nix
+with inputs.nixx.lib.for pkgs;
+let
+  apps  = mkApps  { }                 { whereami = bash ''echo ${PWD} as ${USER}''; };
+  tasks = mkTasks { name = "tasks"; } { info     = bash ''echo ${PWD} as ${USER}''; };
+in {
+  packages = apps // { default = tasks.runner; tasks = tasks.runner; };
+  devShells.default = tasks.devShell;
+}
+```
+
+`tasks.extendShell` folds the runner into your own `pkgs.mkShell` (preserving its
+env + shellHook); `shellHook` / `runCommand` wrappers give the same `${}`-tax-free
+bodies to plain Nix APIs; and devenv is supported by feeding a body's `.text` into
+`enterShell`. Runnable flakes for all three live in `examples/`; the wiring is
+documented in **[API.md](./API.md)**.
 
 ## More
 - **Docs site**: [nnao45.github.io/nixx](https://nnao45.github.io/nixx) — browsable reference with examples.
 - **LLM-friendly plain-text**: [nnao45.github.io/nixx/llms.txt](https://nnao45.github.io/nixx/llms.txt)
 - **Multi-language & shippable binaries**, `mkScript(s)`, `vars` markers
-  (`@nix`, `@sh:q`), the full language/option tables: **[API.md](./API.md)**.
-- **Linter source-mapping** — blocks carry their source position, so shellcheck
-  / ruff diagnostics remap back to the exact `.nix` `line:col`, even under nested
-  indentation. Details in [API.md](./API.md).
+  (`@nix`, `@sh:q`), full language/option tables, `shellint` & `envCheck`
+  reference, and the linter source-mapping: **[API.md](./API.md)**.
