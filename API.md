@@ -409,7 +409,25 @@ exit nonzero (and the `check` derivation fail).
 nix run nixx#shellint -- ./                       # lint a tree (default: cwd)
 nix run nixx#shellint -- --no-shellcheck a.nix b.nix
 nix run nixx#shellint -- --exclude=SC2086 src/    # add a shellcheck exclusion
+nix run nixx#shellint -- --fix ./                 # auto-fix the nix-boundary
+nix run nixx#shellint -- --fix --dry-run ./       # preview fixes as a diff
 ```
+
+### `--fix` — bidirectional boundary normalizer
+`--fix` rewrites only the **nix-boundary** finding, both ways:
+- **escape** a shell-only expansion that breaks Nix → `${#x}` `${x[@]}` `${x^^}`
+  `${x%p}` `${x#p}` become `''${…}`; a bare `${VAR}` with no `with` becomes `''${VAR}`.
+- **de-escape** an over-escaped `''${VAR}` / `''${VAR:-d}` / `''$VAR` back to the bare
+  form — but **only inside a `with`** (otherwise the bare form would fail Nix eval),
+  and only for forms that are valid zero-prefix (parse-wall escapes are left alone).
+
+It edits files in place (`--dry-run` prints a diff instead). Each file is
+**re-parsed after editing and reverted if any tree-sitter ERROR remains**, so a
+mis-fix can never corrupt a file — worst case it's reported as "could not auto-fix
+safely (reverted)". `--fix` lives on the `nix run` app only; the `shellint` flake
+check stays read-only. The fix is idempotent (a second run is a no-op). Even a
+`#`-cascade (where the `#` comments out the closing `''` and the Nix parse derails)
+is fixed via a raw-text scan, since the bytes — `}` and `''` included — are intact.
 ```nix
 # as a flake check (gates `nix flake check`)
 checks.shellint = (inputs.nixx.lib.for pkgs).shellint {

@@ -738,6 +738,82 @@ let
       echo "=== e2e-shellint: ALL PASSED ==="
       touch "$out"
     '';
+
+  # shellint --fix — bidirectional nix-boundary auto-fix. Fixtures are copied to a
+  # writable dir (the store is read-only); needles use ANSI-C quoting so '' / ${ }
+  # survive both the Nix '' string and bash.
+  e2eShellintFix =
+    let
+      nx = forPkgs pkgs;
+      fx = ../tests/shellint-fixtures/fix;
+    in
+    pkgs.runCommand "e2e-shellint-fix"
+      { nativeBuildInputs = [ nx.shellintBin pkgs.coreutils pkgs.diffutils ]; } ''
+      set -u +e
+      W="$PWD/work"; mkdir -p "$W"; cp ${fx}/*.nix "$W"/; chmod +w "$W"/*.nix
+      pass(){ echo "PASS [$1]"; }
+      die(){ echo "FAIL [$1]: $2" >&2; exit 1; }
+      ESC=$'\x27\x27'    # two single-quotes (the escape prefix)
+      D=$'\x24'          # a dollar sign
+      boundary(){ nixx-shellint --no-shellcheck --no-envcheck "$1" 2>/dev/null | grep -c FATAL; }
+
+      ###################### ESCAPE direction ######################
+      E="$W/escape.nix"
+      [[ "$(boundary "$E")" -gt 0 ]] || die esc-pre "expected boundary fatals before fix"
+      pass esc-pre
+      nixx-shellint --fix "$E" >/dev/null 2>&1
+      [[ "$(boundary "$E")" -eq 0 ]] || die esc-post "boundary not clean after --fix"
+      pass esc-post
+      for form in "$D{ARR[@]}" "$D{ARR[*]}" "$D{#ITEMS}" "$D{PATH#/usr}" "$D{FILE##*/}" \
+                  "$D{NAME%.txt}" "$D{WORD^^}" "$D{WORD,,}" "$D{ARR[-1]}" "$D{HOME}"; do
+        grep -qF "$ESC$form" "$E" || die "esc-form" "not escaped: $form"
+      done
+      pass esc-allforms
+      grep -qF "$ESC$D{pkgs.hello}" "$E" && die esc-nixinterp "wrongly escaped \${pkgs.hello}"
+      grep -qF "$D{pkgs.hello}" "$E" || die esc-nixinterp2 "lost \${pkgs.hello}"
+      pass esc-nixinterp-untouched
+      grep -qF "$ESC$ESC" "$E" && die esc-nodouble "double-escape present"
+      pass esc-no-double-escape
+      cp "$E" "$E.snap"; nixx-shellint --fix "$E" >/dev/null 2>&1
+      diff "$E" "$E.snap" >/dev/null || die esc-idem "2nd --fix changed the file"
+      pass esc-idempotent
+
+      ###################### DE-ESCAPE direction ######################
+      DE="$W/deescape.nix"
+      nixx-shellint --fix "$DE" >/dev/null 2>&1
+      grep -qF "$ESC$D{HOME}" "$DE" && die deesc-home "HOME still escaped"
+      grep -qF "$D{HOME}" "$DE" || die deesc-home2 "HOME lost"
+      grep -qF "$ESC$D{EDITOR:-vi}" "$DE" && die deesc-editor "EDITOR still escaped"
+      grep -qF "$D{EDITOR:-vi}" "$DE" || die deesc-editor2 "EDITOR lost"
+      grep -qF "$ESC$D"USER "$DE" && die deesc-user "\$USER still escaped"
+      pass deesc-deescaped
+      grep -qF "$ESC$D{#ARR[@]}" "$DE" || die deesc-keepwall "#ARR[@] wrongly de-escaped"
+      grep -qF "$ESC$D{P##*/}" "$DE" || die deesc-keepbase "P##*/ wrongly de-escaped"
+      grep -qF "$ESC$D{W^^}" "$DE" || die deesc-keepup "W^^ wrongly de-escaped"
+      pass deesc-walls-kept
+      grep -qF "$D{pkgs.hello}" "$DE" || die deesc-nix "lost \${pkgs.hello}"
+      pass deesc-nixinterp-untouched
+      [[ "$(boundary "$DE")" -eq 0 ]] || die deesc-parse "boundary not clean after de-escape"
+      pass deesc-parses
+      cp "$DE" "$DE.snap"; nixx-shellint --fix "$DE" >/dev/null 2>&1
+      diff "$DE" "$DE.snap" >/dev/null || die deesc-idem "2nd --fix changed the file"
+      pass deesc-idempotent
+
+      ###################### no `with` → no de-escape ######################
+      NW="$W/deescape-nowith.nix"; cp "$NW" "$NW.orig"
+      nixx-shellint --fix "$NW" >/dev/null 2>&1
+      diff "$NW" "$NW.orig" >/dev/null || die nowith "de-escaped without a \`with\` scope"
+      pass nowith-noop
+
+      ###################### --dry-run never writes ######################
+      DR="$W/dryrun.nix"; cp ${fx}/escape.nix "$DR"; chmod +w "$DR"; cp "$DR" "$DR.orig"
+      nixx-shellint --fix --dry-run "$DR" >/dev/null 2>&1
+      diff "$DR" "$DR.orig" >/dev/null || die dryrun "dry-run modified the file"
+      pass dryrun-no-write
+
+      echo "=== e2e-shellint-fix: ALL PASSED ==="
+      touch "$out"
+    '';
 in
 {
   checks = {
@@ -757,5 +833,6 @@ in
     e2e-runcommand-vars = e2eRunCommandVars;
     e2e-env-list = e2eEnvList;
     e2e-shellint = e2eShellint;
+    e2e-shellint-fix = e2eShellintFix;
   };
 }

@@ -314,6 +314,11 @@ const toc = [
           <OptionTable options={shellintPasses} />
           <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">config (check builder)</h3>
           <OptionTable options={shellintConfig} />
+          <h3 class="mt-6 font-mono text-sm font-semibold text-neutral-500 dark:text-neutral-400">--fix</h3>
+          <p class="mt-2 text-neutral-600 dark:text-neutral-400">
+            <code class="font-mono text-amber-600 dark:text-amber-400">nix run nixx#shellint -- --fix ./</code> auto-fixes the nix-boundary both ways:
+            <strong>escapes</strong> a shell-only <code class="font-mono text-amber-600 dark:text-amber-400">${`{#x}`}</code>/<code class="font-mono text-amber-600 dark:text-amber-400">${`{x[@]}`}</code> to <code class="font-mono text-amber-600 dark:text-amber-400">''${`{…}`}</code>, and <strong>de-escapes</strong> an <code class="font-mono text-amber-600 dark:text-amber-400">''${`{VAR}`}</code> back to <code class="font-mono text-amber-600 dark:text-amber-400">${`{VAR}`}</code> (only inside a <code class="font-mono text-amber-600 dark:text-amber-400">with</code>). Edits in place (<code class="font-mono text-amber-600 dark:text-amber-400">--dry-run</code> shows a diff); each file is re-parsed and reverted if it isn't ERROR-free, so a mis-fix can't corrupt it. <code class="font-mono text-amber-600 dark:text-amber-400">--fix</code> is app-only — the check stays read-only.
+          </p>
         </section>
 
         <!-- scope -->
