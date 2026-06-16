@@ -161,6 +161,34 @@ The same call form attaches task options in `mkTasks`
 (`bash ''…'' { deps = [ … ]; env = { … }; cwd = ./d; }`). Everything else (full
 option matrix, `mkScript(s)`, `vars` markers) is in **[API.md](./API.md)**.
 
+## shellint — static lint for the shell↔Nix boundary
+`shellint` is a **source-driven** linter (no eval): it parses your `.nix` files
+with tree-sitter-nix, finds every `bash ''…''` block, and reports three classes
+of problem that a generic Nix linter can't — because only nixx knows the string
+is shell:
+
+- **nix-boundary** (FATAL) — a shell-only expansion that breaks Nix (`${#x}`,
+  `${x[@]}`, `${x^^}` …) needs `''${…}`; a bare `${VAR}` with no enclosing `with`
+  will fail Nix eval. Escaped `''${…}`, `with`-scoped `${VAR}`, and real Nix
+  interpolations (`${pkgs.hello}`) are left alone.
+- **shellcheck** (FATAL) — the bash body is shellcheck'd (`$out`/`$src` style
+  build-env refs excluded; add codes with `excludeShellChecks`).
+- **env** (warn) — lists the external env each block requires (block-bound names
+  subtracted), never fatal.
+
+```sh
+nix run nixx#shellint -- ./           # lint a tree (or files)
+nix run nixx#shellint -- --no-shellcheck src/
+```
+```nix
+# gate it in your own flake
+checks.shellint = (inputs.nixx.lib.for pkgs).shellint {
+  src = ./.;
+  exclude = [ "*/vendor/*" ];
+  passes = { envcheck = false; };     # toggle individual passes
+};
+```
+
 ## Apps and shells
 `mkApps` builds store binaries; `mkTasks` builds a just-style runner. They
 compose — app derivations go in the runner's `vars`, tasks call them with
