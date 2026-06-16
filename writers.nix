@@ -18,13 +18,43 @@ rec {
   # runCommand — pkgs.runCommand with an escape-free bash body attrset.
   #
   #   runCommand "x" { } {
+  #     vars  = { url = "https://…"; };          # optional: @nix()/@sh:q()
   #     build = bash ''
   #       echo ${HOME}
+  #       curl @sh:q(url)
   #       mkdir -p $out
   #     '';
   #   }
+  #
+  # The body is shellcheck-gated by default (the lint runs as a build
+  # dependency, so a lint failure fails the build). `$out`/`$src`-style
+  # build-env refs are excluded automatically; opt out per call with
+  # `shellcheck = false` or add codes via `excludeShellChecks = [ … ]`.
+  # A reserved `vars` attr flows through nixx.shellHook for interpolation.
   runCommand = name: attrs: scriptAttrs:
-    pkgs.runCommand name attrs (nixx.shellHook scriptAttrs);
+    let
+      doCheck = scriptAttrs.shellcheck or true;
+      userExcludes = scriptAttrs.excludeShellChecks or [ ];
+      # `vars` is consumed by nixx.shellHook; strip the lint-control keys here.
+      body = nixx.shellHook (lib.removeAttrs scriptAttrs [ "shellcheck" "excludeShellChecks" ]);
+      excludes = [ "SC2154" "SC2153" ] ++ userExcludes;
+      excludeArg = "--exclude=" + lib.concatStringsSep "," excludes;
+      lint = pkgs.runCommandLocal "${name}-shellcheck"
+        { nativeBuildInputs = [ pkgs.shellcheck ]; }
+        ''
+          cat > script.sh <<'NIXX_SC_EOF'
+          #!/usr/bin/env bash
+          ${body}
+          NIXX_SC_EOF
+          shellcheck ${excludeArg} -s bash script.sh
+          touch "$out"
+        '';
+      gatedAttrs =
+        if doCheck
+        then attrs // { nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [ lint ]; }
+        else attrs;
+    in
+    pkgs.runCommand name gatedAttrs body;
 
   # writeShellApplication — pkgs.writeShellApplication with source-read text.
   # `text` may be either an ordinary string (passed through) or a one-block
@@ -57,6 +87,12 @@ rec {
     let
       name = opts.name or "tasks";
       pkgList = opts.packages or [ ];
+      # inputsFrom: derivations (typically `pkgs.mkShell { … }` or any drv) whose
+      # stdenv setup hooks + build inputs should apply. `packages` only puts a
+      # tool's /bin on PATH; tools that rely on a setup hook to export env / wire
+      # stdenv (pkg-config, wrapped SDKs, language envs) need this. Folding them
+      # in here keeps mkTasks the single source of truth for the dev shell.
+      inputsFromList = opts.inputsFrom or [ ];
       # envCheck: set GLOBALLY here (applies to every bash task as default)
       # AND/OR PER-BLOCK via `bash ''body'' { envCheck = ...; }`. A per-block
       # value overrides the global default for that task:
@@ -72,9 +108,11 @@ rec {
         (builtins.attrValues taskDefs);
       envCheckEnabled = envCheckVal != false || anyTaskEnvCheck;
       treeSitterBash = pkgs.tree-sitter-grammars.tree-sitter-bash;
+      # The classifier is emitted unconditionally so `--env-list` always works,
+      # even when no task opts into enforcement; `envCheckEnabled` only gates the
+      # per-task blocking checks and the shellcheck relaxation below.
       envCheckHookText =
-        if !envCheckEnabled then ""
-        else ''
+        ''
           # _nixx_le a_row a_col b_row b_col → true iff (a_row,a_col) <= (b_row,b_col)
           _nixx_le() {
             (( $1 < $3 )) && return 0
@@ -91,9 +129,12 @@ rec {
           # subtracted. tree-sitter locates and ranges every expansion; the operator
           # is classified from the captured node text (the grammar collapses
           # ''${VAR:-} / ''${#VAR} / ''${!VAR} to the same shape as a bare ref).
+          # mode "check" (default) aborts on unset/empty and reports to stderr;
+          # mode "list" (--env-list) only reports — to stdout — and never aborts.
           _nixx_env_check() {
             local _task="$1" _tmp _qf _out _line _cap _txt _name _strict _i _j _nested
-            local _bound=" " _req=" " _has_err=0
+            local _bound=" " _req=" " _has_err=0 _fd=2
+            [[ "''${_NIXX_ENV_MODE:-check}" == "list" ]] && _fd=1
             local -a _rsr=() _rsc=() _rer=() _rec=() _rtxt=() _reqlist=()
             local -A _strictof=()
             # shellcheck disable=SC2016
@@ -172,18 +213,21 @@ rec {
               esac
             done
 
-            printf 'nixx-env [%s]:\n' "$_task" >&2
+            printf 'nixx-env [%s]:\n' "$_task" >&"$_fd"
             for _name in ''${_reqlist[@]+"''${_reqlist[@]}"}; do
               if [[ ! -v "$_name" ]]; then
-                printf '  $%-22s UNSET    <- ERROR\n' "$_name" >&2
+                printf '  $%-22s UNSET    <- ERROR\n' "$_name" >&"$_fd"
                 _has_err=1
               elif [[ "''${_strictof[$_name]}" == "1" && -z "''${!_name}" ]]; then
-                printf '  $%-22s (empty)  <- ERROR\n' "$_name" >&2
+                printf '  $%-22s (empty)  <- ERROR\n' "$_name" >&"$_fd"
                 _has_err=1
               else
-                printf '  $%-22s = %s\n' "$_name" "''${!_name}" >&2
+                printf '  $%-22s = %s\n' "$_name" "''${!_name}" >&"$_fd"
               fi
             done
+
+            # list mode: report only, never block
+            [[ "$_fd" -eq 1 ]] && return 0
 
             if [[ "$_has_err" -ne 0 ]]; then
               printf 'nixx-env: aborting task %s — unset or empty vars above must be set\n' \
@@ -194,12 +238,14 @@ rec {
           }
         '';
       result = nixx.mkTasks
-        (lib.removeAttrs opts [ "packages" "envCheck" ] // {
+        (lib.removeAttrs opts [ "packages" "envCheck" "inputsFrom" ] // {
           inherit envCheckHookText;
           envCheckDefault = envCheckVal;
         })
         taskDefs;
-      runtimeInputs = pkgList ++ lib.optional envCheckEnabled pkgs.tree-sitter;
+      # tree-sitter ships in every runner: `--env-list` works regardless of
+      # whether any task opts into blocking env-check.
+      runtimeInputs = pkgList ++ [ pkgs.tree-sitter ];
       runner = pkgs.writeShellApplication {
         inherit name;
         runtimeInputs = runtimeInputs;
@@ -226,15 +272,27 @@ rec {
       # collapses to a single source of truth: `mkTasks { packages }` covers tasks
       # AND the prompt; `mkShell { packages }` is only for prompt-only extras that
       # no task calls. (See README "what goes where".)
+      # inputsFrom build inputs + shell hooks, folded by hand so `extendShell`
+      # (which must overrideAttrs to keep the caller's env) can apply them too.
+      ifBuildInputs = lib.concatMap
+        (s: (s.nativeBuildInputs or [ ]) ++ (s.buildInputs or [ ]) ++ (s.propagatedBuildInputs or [ ]))
+        inputsFromList;
+      ifShellHook = lib.concatStringsSep "\n" (map (s: s.shellHook or "") inputsFromList);
       devShell = pkgs.mkShell {
         packages = [ runner ] ++ pkgList;
+        inputsFrom = inputsFromList;
         shellHook = completionHook;
       };
-      extendShell = shell: pkgs.mkShell {
-        inputsFrom = [ shell ];
-        packages = [ runner ] ++ pkgList;
-        shellHook = completionHook;
-      };
+      # `extendShell` previously rebuilt the shell with `inputsFrom = [ shell ]`,
+      # which silently DROPPED the caller's bare env vars and shellHook (inputsFrom
+      # only pulls build inputs). Override the caller's shell instead so its env
+      # and hook survive, then append the runner, packages, and inputsFrom wiring.
+      extendShell = shell: shell.overrideAttrs (old: {
+        nativeBuildInputs = (old.nativeBuildInputs or [ ])
+          ++ [ runner ] ++ pkgList ++ ifBuildInputs;
+        shellHook = lib.concatStringsSep "\n"
+          (lib.filter (s: s != "") [ (old.shellHook or "") ifShellHook completionHook ]);
+      });
     in
     {
       inherit runner devShell extendShell;

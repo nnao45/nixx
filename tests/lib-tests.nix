@@ -633,6 +633,20 @@ let
       expected = true;
     }
 
+    {
+      name = "shellHook: vars attr applies @sh:q interpolation";
+      got = contains "echo 'hello world'"
+        (lib.shellHook { vars = { msg = "hello world"; }; hook = lib.sh "echo @sh:q(msg)\n"; });
+      expected = true;
+    }
+
+    {
+      name = "shellHook: vars attr stripped before single-block detection";
+      got = contains "echo 7"
+        (lib.shellHook { vars = { port = 7; }; build = lib.sh "echo @nix(port)\n"; });
+      expected = true;
+    }
+
     # ----------------------------------------------------------------
     # mkTasks — runner generation
     # ----------------------------------------------------------------
