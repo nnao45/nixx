@@ -314,46 +314,144 @@ let
 
   e2eEnvCheck =
     let
-      # global envCheck = true: always check every bash task before running
-      always = writersMkTasks
-        {
-          name = "e2e-env-check-always";
-          envCheck = true;
-        }
-        {
-          unset = nixx.sh ''
-            echo "body ran"
-            echo "val=''${NIXX_CHK_UNSET:-<unset>}"
-          '';
-          empty = (nixx.sh ''
-            echo "body ran"
-            echo "val=''${NIXX_CHK_EMPTY:-<empty>}"
-          '') { env = { NIXX_CHK_EMPTY = ""; }; };
-          set = (nixx.sh ''
-            echo "body ran"
-            echo "val=$NIXX_CHK_SET"
-          '') { env = { NIXX_CHK_SET = "hello nixx"; }; };
-          dedup = nixx.sh ''
-            echo "a=''${NIXX_CHK_DEDUP:-x}"
-            echo "b=''${NIXX_CHK_DEDUP:-y}"
-          '';
-        };
-      # per-task override: global true, per-task false → only with --env-check.
-      # Demonstrates that --env-check applies to ALL bash blocks in the runner.
-      perTask = writersMkTasks
-        { name = "e2e-env-check-per-task"; envCheck = true; }
-        {
-          # inherits global (true) → always check
-          always_task = nixx.sh ''
-            echo "always body ran"
-            echo "val=''${NIXX_PER_ALWAYS:-<unset>}"
-          '';
-          # per-task false → check only when --env-check is passed
-          cli_task = (nixx.sh ''
-            echo "cli body ran"
-            echo "val=''${NIXX_PER_CLI:-<unset>}"
-          '') { envCheck = false; };
-        };
+      nx = forPkgs pkgs;
+      # Global envCheck = true → every bash task is pre-flight checked.
+      # `with nx` lets the common `${VAR}` / `${VAR:-x}` forms stay escape-free;
+      # only Nix-unparseable forms (`:=` `:+` `:?` `?` `#` `!`, nested `$`) keep
+      # the `''${...}` escape.
+      #
+      # Semantics under test (the redesign):
+      #   - bare `$VAR` / `${VAR}`         → REQUIRED, must be set AND non-empty
+      #   - `${VAR:?m}` / `${VAR?m}`       → REQUIRED ( :? also rejects empty )
+      #   - `${VAR:-x}` `-` `:=` `:+`      → SKIP (author handles it; opt-out)
+      #   - `${#VAR}` `${!VAR}` `${VAR#p}` → SKIP (AST collapses to bare → classify by text)
+      #   - nested ref in a default        → SKIP (`${A:-$B}` ⇒ neither A nor B)
+      #   - names bound in the block       → SKIP (assignment/export/for/read)
+      #
+      # Runtime-dangerous SKIP forms (unset var under `set -u`) are wrapped in
+      # `if false; then … fi`: the expansion stays in the source for tree-sitter
+      # to classify, but is never evaluated, so the body reaches BODY_RAN.
+      tasks = with nx; mkTasks { name = "e2e-env-check"; envCheck = true; } {
+        # ---- REQUIRED → pre-flight ABORT, body never runs ----
+        req_simple = sh ''
+          echo "BODY_RAN"
+          echo "v=$NIXX_RS"
+        '';
+        req_braced = sh ''
+          echo "BODY_RAN"
+          echo "v=${NIXX_RB}"
+        '';
+        req_empty = (sh ''
+          echo "BODY_RAN"
+          echo "v=${NIXX_RE}"
+        '') { env = { NIXX_RE = ""; }; };
+        req_qcolon_unset = sh ''
+          echo "BODY_RAN"
+          echo "v=''${NIXX_QC:?need}"
+        '';
+        req_qcolon_empty = (sh ''
+          echo "BODY_RAN"
+          echo "v=''${NIXX_QCE:?need}"
+        '') { env = { NIXX_QCE = ""; }; };
+        req_qmark_unset = sh ''
+          echo "BODY_RAN"
+          echo "v=''${NIXX_QM?need}"
+        '';
+        req_multi = sh ''
+          echo "BODY_RAN"
+          echo "$NIXX_M1 ${NIXX_M2}"
+        '';
+        req_dedup = sh ''
+          echo "BODY_RAN"
+          echo "$NIXX_DD"
+          echo "${NIXX_DD}"
+        '';
+        # bound NIXX_LOCAL is subtracted; only NIXX_NEEDED is required → abort
+        combo_mixed = sh ''
+          NIXX_LOCAL=ok
+          echo "BODY_RAN"
+          echo "$NIXX_LOCAL ${NIXX_NEEDED}"
+        '';
+
+        # ---- SKIP → no env-check abort, body runs (BODY_RAN) ----
+        skip_default = sh ''
+          echo "BODY_RAN"
+          echo "v=${NIXX_DC:-fallback}"
+        '';
+        skip_dash = sh ''
+          echo "BODY_RAN"
+          echo "v=''${NIXX_DD2-fallback}"
+        '';
+        skip_assign = sh ''
+          echo "BODY_RAN"
+          echo "v=''${NIXX_AS:=fallback}"
+        '';
+        skip_alt = sh ''
+          echo "BODY_RAN"
+          echo "v=''${NIXX_AL:+set}"
+        '';
+        skip_length = sh ''
+          echo "BODY_RAN"
+          if false; then echo "''${#NIXX_LEN}"; fi
+        '';
+        skip_indirect = sh ''
+          echo "BODY_RAN"
+          if false; then echo "''${!NIXX_IND}"; fi
+        '';
+        skip_suffix = sh ''
+          echo "BODY_RAN"
+          if false; then echo "''${NIXX_SUF#pre}"; fi
+        '';
+        # `${VAR?m}` (no colon) on a set-but-empty var → allowed → body runs
+        skip_qmark_empty = (sh ''
+          echo "BODY_RAN"
+          echo "v=''${NIXX_QEO?msg}"
+        '') { env = { NIXX_QEO = ""; }; };
+        skip_nested = sh ''
+          echo "BODY_RAN"
+          if false; then echo "''${NIXX_NA:-$NIXX_NESTED}"; fi
+        '';
+        skip_local = sh ''
+          NIXX_LA=hi
+          echo "BODY_RAN"
+          echo "v=$NIXX_LA"
+        '';
+        skip_export = sh ''
+          export NIXX_EA=hi
+          echo "BODY_RAN"
+          echo "v=$NIXX_EA"
+        '';
+        skip_for = sh ''
+          echo "BODY_RAN"
+          for NIXX_IT in a b c; do echo "v=$NIXX_IT"; done
+        '';
+        skip_read = sh ''
+          echo "BODY_RAN"
+          read -r NIXX_RV <<< "hi"
+          echo "v=$NIXX_RV"
+        '';
+
+        # ---- PASS → set & non-empty: check passes, value shown, body runs ----
+        pass_set = (sh ''
+          echo "BODY_RAN"
+          echo "v=$NIXX_PS"
+        '') { env = { NIXX_PS = "hello nixx"; }; };
+      };
+      # Separate runner: per-task envCheck override + --env-check flag plumbing.
+      flagTasks = with nx; mkTasks { name = "e2e-env-check-flag"; envCheck = true; } {
+        # inherits global (true) → always checked
+        always_task = sh ''
+          echo "BODY_RAN"
+          echo "v=${NIXX_FA}"
+        '';
+        # per-task false → only checked when --env-check is passed
+        cli_task = (sh ''
+          echo "CLI_BODY"
+          echo "v=${NIXX_FC}"
+        '') { envCheck = false; };
+      };
+      runnerBin = "${tasks.runner}/bin/e2e-env-check";
+      flagBin = "${flagTasks.runner}/bin/e2e-env-check-flag";
     in
     pkgs.runCommand "e2e-env-check" { } ''
       set -euo pipefail
@@ -390,60 +488,90 @@ let
         echo "PASS [$ctx]: '$needle' appears exactly $expected time(s)"
       }
 
-      always=${always.runner}/bin/e2e-env-check-always
-      per=${perTask.runner}/bin/e2e-env-check-per-task
-      # cerr: run command, capture stderr, ignore exit code
-      cerr() { local e; e=$("$@" 2>&1 >/dev/null) || true; printf '%s' "$e"; }
+      R=${runnerBin}
+      F=${flagBin}
 
-      # unset var → warns, task ABORTS (body never runs)
-      e=$(cerr "$always" unset)
-      chk_has "unset-name" "NIXX_CHK_UNSET" "$e"
-      chk_has "unset-label" "UNSET" "$e"
-      chk_has "unset-abort" "aborting" "$e"
-      stdout=$("$always" unset 2>/dev/null) || true
-      chk_not "unset-no-body" "body ran" "$stdout"
+      # determinism: the "unset" fixtures must truly be absent from the env
+      unset NIXX_RS NIXX_RB NIXX_QC NIXX_QM NIXX_M1 NIXX_M2 NIXX_DD \
+            NIXX_NEEDED NIXX_DC NIXX_DD2 NIXX_AS NIXX_AL NIXX_LEN NIXX_IND \
+            NIXX_SUF NIXX_NA NIXX_NESTED NIXX_FA NIXX_FC 2>/dev/null || true
 
-      # empty var → warns, task ABORTS (body never runs)
-      e=$(cerr "$always" empty)
-      chk_has "empty-name" "NIXX_CHK_EMPTY" "$e"
-      chk_has "empty-label" "(empty)" "$e"
-      chk_has "empty-abort" "aborting" "$e"
-      stdout=$("$always" empty 2>/dev/null) || true
-      chk_not "empty-no-body" "body ran" "$stdout"
+      errof() { "$1" "''${@:2}" 2>&1 >/dev/null || true; }
+      outof() { "$1" "''${@:2}" 2>/dev/null || true; }
 
-      # set var → check passes, body runs
-      e=$(cerr "$always" set)
-      chk_has "set-name" "NIXX_CHK_SET" "$e"
-      chk_has "set-value" "= hello nixx" "$e"
-      chk_not "set-no-error" "ERROR" "$e"
-      stdout=$("$always" set 2>/dev/null)
-      chk_has "set-body" "body ran" "$stdout"
+      # REQUIRED: pre-flight aborts, body never runs, every named var is reported
+      abort_reports() {
+        local t="$1"; shift
+        local e o; e=$(errof "$R" "$t"); o=$(outof "$R" "$t")
+        chk_has "$t:abort" "aborting" "$e"
+        chk_not "$t:no-body" "BODY_RAN" "$o"
+        local v; for v in "$@"; do chk_has "$t:reports-$v" "$v" "$e"; done
+      }
+      abort_reports req_simple       NIXX_RS
+      abort_reports req_braced       NIXX_RB
+      abort_reports req_empty        NIXX_RE
+      abort_reports req_qcolon_unset NIXX_QC
+      abort_reports req_qcolon_empty NIXX_QCE
+      abort_reports req_qmark_unset  NIXX_QM
+      abort_reports req_multi        NIXX_M1 NIXX_M2
 
-      # dedup: same unset var referenced twice → reported exactly once, then abort
-      e=$(cerr "$always" dedup)
-      chk_count "dedup" "NIXX_CHK_DEDUP" "$e" 1
+      # dedup: a var referenced twice is reported exactly once
+      e=$(errof "$R" req_dedup)
+      chk_has   "dedup:abort" "aborting" "$e"
+      chk_count "dedup:once"  "NIXX_DD"  "$e" 1
 
-      # per-task: always_task (inherits global true) → always checks → aborts on unset
-      e=$(cerr "$per" always_task)
-      chk_has "per-always-on" "nixx-env" "$e"
-      chk_has "per-always-var" "NIXX_PER_ALWAYS" "$e"
-      chk_has "per-always-abort" "aborting" "$e"
-      stdout=$("$per" always_task 2>/dev/null) || true
-      chk_not "per-always-no-body" "always body ran" "$stdout"
+      # empty-set vars are labelled (empty), not UNSET
+      e=$(errof "$R" req_empty);        chk_has "req_empty:label"  "(empty)" "$e"
+      e=$(errof "$R" req_qcolon_empty); chk_has "req_qcolon:label" "(empty)" "$e"
 
-      # per-task: cli_task (envCheck = false) → no check without --env-check → body runs
-      e=$(cerr "$per" cli_task)
-      chk_not "per-cli-off" "nixx-env" "$e"
-      stdout=$("$per" cli_task 2>/dev/null)
-      chk_has "per-cli-body" "cli body ran" "$stdout"
+      # combo: locally-bound NIXX_LOCAL is subtracted; only NIXX_NEEDED required
+      e=$(errof "$R" combo_mixed); o=$(outof "$R" combo_mixed)
+      chk_has "combo:abort"     "aborting"    "$e"
+      chk_has "combo:needed"    "NIXX_NEEDED" "$e"
+      chk_not "combo:not-local" "NIXX_LOCAL"  "$e"
+      chk_not "combo:no-body"   "BODY_RAN"    "$o"
 
-      # per-task: --env-check forces check on ALL bash blocks, including cli_task → aborts
-      e=$(cerr "$per" --env-check cli_task)
-      chk_has "per-cli-flag-on" "nixx-env" "$e"
-      chk_has "per-cli-flag-var" "NIXX_PER_CLI" "$e"
-      chk_has "per-cli-flag-abort" "aborting" "$e"
-      stdout=$("$per" --env-check cli_task 2>/dev/null) || true
-      chk_not "per-cli-flag-no-body" "cli body ran" "$stdout"
+      # SKIP: env-check must NOT abort; body reaches BODY_RAN
+      runs() {
+        local t="$1"
+        local e o; e=$(errof "$R" "$t"); o=$(outof "$R" "$t")
+        chk_not "$t:no-abort" "aborting" "$e"
+        chk_has "$t:body"     "BODY_RAN" "$o"
+      }
+      runs skip_default
+      runs skip_dash
+      runs skip_assign
+      runs skip_alt
+      runs skip_length
+      runs skip_indirect
+      runs skip_suffix
+      runs skip_qmark_empty
+      runs skip_nested
+      runs skip_local
+      runs skip_export
+      runs skip_for
+      runs skip_read
+
+      # PASS: set & non-empty → no error, value shown, body runs
+      e=$(errof "$R" pass_set); o=$(outof "$R" pass_set)
+      chk_not "pass:no-error" "ERROR"       "$e"
+      chk_has "pass:value"    "hello nixx"  "$e"
+      chk_has "pass:body"     "BODY_RAN"    "$o"
+
+      # --- per-task override + --env-check flag plumbing ---
+      # always_task inherits global true → aborts on unset
+      e=$(errof "$F" always_task); o=$(outof "$F" always_task)
+      chk_has "flag-always:abort" "aborting" "$e"
+      chk_not "flag-always:no-body" "BODY_RAN" "$o"
+      # cli_task envCheck=false → no check without flag → body runs
+      e=$(errof "$F" cli_task); o=$(outof "$F" cli_task)
+      chk_not "flag-cli-off:no-check" "nixx-env" "$e"
+      chk_has "flag-cli-off:body"     "CLI_BODY" "$o"
+      # --env-check forces the check on cli_task → aborts
+      e=$(errof "$F" --env-check cli_task); o=$(outof "$F" --env-check cli_task)
+      chk_has "flag-cli-on:check" "nixx-env" "$e"
+      chk_has "flag-cli-on:abort" "aborting" "$e"
+      chk_not "flag-cli-on:no-body" "CLI_BODY" "$o"
 
       echo "=== e2e-env-check: ALL PASSED ==="
       touch "$out"

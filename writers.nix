@@ -75,68 +75,119 @@ rec {
       envCheckHookText =
         if !envCheckEnabled then ""
         else ''
+          # _nixx_le a_row a_col b_row b_col → true iff (a_row,a_col) <= (b_row,b_col)
+          _nixx_le() {
+            (( $1 < $3 )) && return 0
+            (( $1 == $3 && $2 <= $4 )) && return 0
+            return 1
+          }
+          # Free-variable env-check. A bash block declares an env requirement only
+          # through a *bare* reference ($VAR / ''${VAR}) or an explicit required
+          # expansion (''${VAR:?} / ''${VAR?}). Default / assignment / transform
+          # expansions (''${VAR:-x} ''${VAR:=x} ''${VAR:+x} ''${#VAR} ''${!VAR}
+          # ''${VAR#p} …) are the author's business and are skipped. References that
+          # are nested inside another expansion (a default value) are skipped, and
+          # names bound within the block (assignment / export / for / read) are
+          # subtracted. tree-sitter locates and ranges every expansion; the operator
+          # is classified from the captured node text (the grammar collapses
+          # ''${VAR:-} / ''${#VAR} / ''${!VAR} to the same shape as a bare ref).
           _nixx_env_check() {
-            local _nixx_task="$1" _nixx_tmp _nixx_qf _nixx_ts_out
-            local _nixx_line _nixx_varname _nixx_row _nixx_scol _nixx_ecol
-            local _nixx_lineno _nixx_srcline _nixx_seen="" _nixx_val _nixx_has_warn=0
-            local _nixx_old_re _nixx_new_re
+            local _task="$1" _tmp _qf _out _line _cap _txt _name _strict _i _j _nested
+            local _bound=" " _req=" " _has_err=0
+            local -a _rsr=() _rsc=() _rer=() _rec=() _rtxt=() _reqlist=()
+            local -A _strictof=()
             # shellcheck disable=SC2016
-            _nixx_old_re='@ref:[[:space:]]*\[([0-9]+),[[:space:]]*([0-9]+)\][[:space:]]*-[[:space:]]*\[[0-9]+,[[:space:]]*([0-9]+)\]'
-            # shellcheck disable=SC2016
-            _nixx_new_re='capture:[^,]+,[[:space:]]*start:[[:space:]]*\(([0-9]+),[[:space:]]*([0-9]+)\),[[:space:]]*end:[[:space:]]*\([0-9]+,[[:space:]]*([0-9]+)\),[[:space:]]*text:[[:space:]]*`?([A-Za-z_][A-Za-z0-9_]*)`?'
-            _nixx_tmp=$(mktemp /tmp/nixx-env-XXXXXX.sh)
-            _nixx_qf=$(mktemp /tmp/nixx-qry-XXXXXX.scm)
-            cat > "$_nixx_tmp"
-            printf '(simple_expansion (variable_name) @ref)\n(expansion (variable_name) @ref)\n' \
-              > "$_nixx_qf"
-            if ! _nixx_ts_out=$(tree-sitter query \
+            local _re='capture: [0-9]+ - ([a-z]+), start: \(([0-9]+), ([0-9]+)\), end: \(([0-9]+), ([0-9]+)\), text: `(.*)`'
+            _tmp=$(mktemp /tmp/nixx-env-XXXXXX.sh)
+            _qf=$(mktemp /tmp/nixx-qry-XXXXXX.scm)
+            cat > "$_tmp"
+            cat > "$_qf" <<'_NIXX_QUERY'
+          (simple_expansion) @ref
+          (expansion) @ref
+          (variable_assignment name: (variable_name) @bound)
+          (variable_assignment name: (subscript name: (variable_name) @bound))
+          (declaration_command (variable_name) @bound)
+          (for_statement variable: (variable_name) @bound)
+          ((command name: (command_name) @c argument: (word) @bound)
+           (#match? @c "^(read|mapfile|readarray|getopts)$"))
+          _NIXX_QUERY
+            if ! _out=$(tree-sitter query \
               --lib-path ${treeSitterBash}/parser \
               --lang-name bash \
-              "$_nixx_qf" "$_nixx_tmp" 2>/dev/null); then
-              rm -f "$_nixx_tmp" "$_nixx_qf"
+              "$_qf" "$_tmp" 2>/dev/null); then
+              rm -f "$_tmp" "$_qf"
               return 0
             fi
-            printf 'nixx-env [%s]:\n' "$_nixx_task" >&2
-            while IFS= read -r _nixx_line; do
-              if [[ "$_nixx_line" =~ $_nixx_new_re ]]; then
-                _nixx_row="''${BASH_REMATCH[1]}"
-                _nixx_scol="''${BASH_REMATCH[2]}"
-                _nixx_ecol="''${BASH_REMATCH[3]}"
-                _nixx_varname="''${BASH_REMATCH[4]}"
-              elif [[ "$_nixx_line" =~ $_nixx_old_re ]]; then
-                _nixx_row="''${BASH_REMATCH[1]}"
-                _nixx_scol="''${BASH_REMATCH[2]}"
-                _nixx_ecol="''${BASH_REMATCH[3]}"
-                _nixx_lineno=$(( _nixx_row + 1 ))
-                _nixx_srcline=$(sed -n "''${_nixx_lineno}p" "$_nixx_tmp")
-                _nixx_varname="''${_nixx_srcline:$(( _nixx_scol )):$(( _nixx_ecol - _nixx_scol ))}"
+            rm -f "$_tmp" "$_qf"
+
+            # bucket captures: collect ref ranges+text, gather bound names
+            while IFS= read -r _line; do
+              [[ "$_line" =~ $_re ]] || continue
+              _cap="''${BASH_REMATCH[1]}"
+              if [[ "$_cap" == "bound" ]]; then
+                _bound+="''${BASH_REMATCH[6]} "
+              elif [[ "$_cap" == "ref" ]]; then
+                _rsr+=("''${BASH_REMATCH[2]}"); _rsc+=("''${BASH_REMATCH[3]}")
+                _rer+=("''${BASH_REMATCH[4]}"); _rec+=("''${BASH_REMATCH[5]}")
+                _rtxt+=("''${BASH_REMATCH[6]}")
+              fi
+            done <<< "$_out"
+
+            local _n=''${#_rtxt[@]}
+            for (( _i=0; _i<_n; _i++ )); do
+              # drop refs nested inside another expansion (e.g. the $B in ''${A:-$B})
+              _nested=0
+              for (( _j=0; _j<_n; _j++ )); do
+                [[ $_i -eq $_j ]] && continue
+                if _nixx_le "''${_rsr[_j]}" "''${_rsc[_j]}" "''${_rsr[_i]}" "''${_rsc[_i]}" \
+                   && _nixx_le "''${_rer[_i]}" "''${_rec[_i]}" "''${_rer[_j]}" "''${_rec[_j]}" \
+                   && ! { [[ "''${_rsr[_i]}" == "''${_rsr[_j]}" && "''${_rsc[_i]}" == "''${_rsc[_j]}" \
+                         && "''${_rer[_i]}" == "''${_rer[_j]}" && "''${_rec[_i]}" == "''${_rec[_j]}" ]]; }
+                then
+                  _nested=1; break
+                fi
+              done
+              [[ $_nested -eq 1 ]] && continue
+
+              # classify the expansion text → required name + emptiness strictness
+              # tree-sitter can prefix the node text with surrounding whitespace
+              # inside strings, so the patterns tolerate leading/trailing space.
+              _txt="''${_rtxt[_i]}"; _name=""; _strict=1
+              if [[ "$_txt" =~ ^[[:space:]]*\$([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*$ ]]; then
+                _name="''${BASH_REMATCH[1]}"; _strict=1     # $VAR
+              elif [[ "$_txt" =~ ^[[:space:]]*\$\{([A-Za-z_][A-Za-z0-9_]*)\}[[:space:]]*$ ]]; then
+                _name="''${BASH_REMATCH[1]}"; _strict=1     # bare ''${VAR}
+              elif [[ "$_txt" =~ ^[[:space:]]*\$\{([A-Za-z_][A-Za-z0-9_]*):\? ]]; then
+                _name="''${BASH_REMATCH[1]}"; _strict=1     # ''${VAR:?} — unset OR empty
+              elif [[ "$_txt" =~ ^[[:space:]]*\$\{([A-Za-z_][A-Za-z0-9_]*)\? ]]; then
+                _name="''${BASH_REMATCH[1]}"; _strict=0     # ''${VAR?}  — unset only
               else
-                continue
+                continue                                    # default/transform → skip
               fi
 
-              _nixx_lineno=$(( _nixx_row + 1 ))
-              case " $_nixx_seen " in *" $_nixx_varname "*) continue ;; esac
-              _nixx_seen="$_nixx_seen $_nixx_varname"
-              if [[ -v "$_nixx_varname" ]]; then
-                _nixx_val="''${!_nixx_varname}"
-                if [[ -z "$_nixx_val" ]]; then
-                  printf '  line %-4s  $%-20s  (empty)  <- ERROR\n' \
-                    "$_nixx_lineno" "$_nixx_varname" >&2
-                  _nixx_has_warn=1
-                else
-                  printf '  line %-4s  $%-20s  = %s\n' \
-                    "$_nixx_lineno" "$_nixx_varname" "$_nixx_val" >&2
-                fi
+              case "$_bound" in *" $_name "*) continue ;; esac   # bound in block
+              case "$_req" in
+                *" $_name "*) [[ $_strict -eq 1 ]] && _strictof["$_name"]=1 ;;
+                *) _req+="$_name "; _reqlist+=("$_name"); _strictof["$_name"]=$_strict ;;
+              esac
+            done
+
+            printf 'nixx-env [%s]:\n' "$_task" >&2
+            for _name in ''${_reqlist[@]+"''${_reqlist[@]}"}; do
+              if [[ ! -v "$_name" ]]; then
+                printf '  $%-22s UNSET    <- ERROR\n' "$_name" >&2
+                _has_err=1
+              elif [[ "''${_strictof[$_name]}" == "1" && -z "''${!_name}" ]]; then
+                printf '  $%-22s (empty)  <- ERROR\n' "$_name" >&2
+                _has_err=1
               else
-                printf '  line %-4s  $%-20s  UNSET    <- ERROR\n' \
-                  "$_nixx_lineno" "$_nixx_varname" >&2
-                _nixx_has_warn=1
+                printf '  $%-22s = %s\n' "$_name" "''${!_name}" >&2
               fi
-            done <<< "$_nixx_ts_out"
-            rm -f "$_nixx_tmp" "$_nixx_qf"
-            if [[ "$_nixx_has_warn" -ne 0 ]]; then
+            done
+
+            if [[ "$_has_err" -ne 0 ]]; then
               printf 'nixx-env: aborting task %s — unset or empty vars above must be set\n' \
-                "$_nixx_task" >&2
+                "$_task" >&2
               return 1
             fi
             return 0
@@ -153,6 +204,11 @@ rec {
         inherit name;
         runtimeInputs = runtimeInputs;
         text = result.runner;
+        # When env-check is enabled, bare `$VAR` / `${VAR}` references to
+        # external environment variables are intentional — env-check validates
+        # them at runtime, so silence shellcheck's "referenced but not assigned"
+        # (SC2154) and "possible misspelling" (SC2153) for the whole runner.
+        excludeShellChecks = lib.optionals envCheckEnabled [ "SC2154" "SC2153" ];
       };
       taskNames = lib.concatStringsSep " " (map (m: m.name) result.meta);
       completionHook = ''
