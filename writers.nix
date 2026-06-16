@@ -12,6 +12,50 @@ let
   inherit (pkgs) lib stdenv;
 in
 rec {
+  # shellint — static linter for nixx shell blocks (source-driven, no eval).
+  # The engine lives in ./shellint.sh (a real, lintable bash file); parser store
+  # paths are injected via @…@ placeholders. `shellintBin` is the runnable app
+  # (`nix run nixx#shellint -- ./`); `shellint { src; … }` is the check builder.
+  shellintBin =
+    let
+      tsNix = pkgs.tree-sitter-grammars.tree-sitter-nix;
+      tsBash = pkgs.tree-sitter-grammars.tree-sitter-bash;
+      engine = builtins.replaceStrings
+        [ "@TSN_PARSER@" "@TSB_PARSER@" ]
+        [ "${tsNix}/parser" "${tsBash}/parser" ]
+        (builtins.readFile ./shellint.sh);
+    in
+    pkgs.writeShellApplication {
+      name = "nixx-shellint";
+      runtimeInputs = [ pkgs.tree-sitter pkgs.shellcheck pkgs.findutils pkgs.gnused pkgs.gawk pkgs.coreutils ];
+      # the engine is intentionally non-errexit (it processes every file/finding)
+      bashOptions = [ "nounset" "pipefail" ];
+      text = engine;
+    };
+
+  # shellint — a flake check that runs the linter over `src` at build time.
+  #   checks.shellint = (nixx.for pkgs).shellint { src = ./.; };
+  # `passes` toggles individual passes; `exclude` are find(1) path globs to skip;
+  # `excludeShellChecks` adds shellcheck codes to ignore.
+  shellint =
+    { src
+    , exclude ? [ ]
+    , passes ? { }
+    , excludeShellChecks ? [ ]
+    }:
+    let
+      flags = lib.optional (!(passes.nix or true)) "--no-nix"
+        ++ lib.optional (!(passes.shellcheck or true)) "--no-shellcheck"
+        ++ lib.optional (!(passes.envcheck or true)) "--no-envcheck"
+        ++ lib.optional (excludeShellChecks != [ ])
+        "--exclude=${lib.concatStringsSep "," excludeShellChecks}";
+      excludeArgs = lib.concatMapStringsSep " " (e: "--exclude-path=${lib.escapeShellArg e}") exclude;
+    in
+    pkgs.runCommandLocal "nixx-shellint-check" { nativeBuildInputs = [ shellintBin ]; } ''
+      set -o pipefail
+      nixx-shellint ${lib.concatStringsSep " " flags} ${excludeArgs} ${src} 2>&1 | tee "$out"
+    '';
+
   # shellHook — pkgs-bound namespace convenience for the pure nixx.shellHook.
   shellHook = nixx.shellHook;
 

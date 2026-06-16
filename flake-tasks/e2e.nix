@@ -694,6 +694,50 @@ let
       echo "=== e2e-env-list: ALL PASSED ==="
       touch "$out"
     '';
+
+  # shellint — static lint over fixture .nix files (parse-wall fixtures live in
+  # tests/shellint-fixtures and are NOT evaluated by the flake).
+  e2eShellint =
+    let
+      nx = forPkgs pkgs;
+      fx = ../tests/shellint-fixtures;
+    in
+    pkgs.runCommand "e2e-shellint" { nativeBuildInputs = [ nx.shellintBin ]; } ''
+      set -u +e   # shellint exits nonzero on FATAL; we capture rc by hand
+      chk_has() { printf '%s' "$3" | grep -qF "$2" || { printf 'FAIL [%s]: missing %s\n%s\n' "$1" "$2" "$3"; exit 1; }; echo "PASS [$1]"; }
+      chk_not() { printf '%s' "$3" | grep -qF "$2" && { printf 'FAIL [%s]: unexpected %s\n%s\n' "$1" "$2" "$3"; exit 1; }; echo "PASS [$1]"; }
+
+      # boundary: shell-only form ''${#ARR} breaks Nix → FATAL + nonzero exit
+      o=$(nixx-shellint ${fx}/wall.nix 2>&1); rc=$?
+      chk_has wall-fatal "[nix] FATAL" "$o"
+      [[ $rc -ne 0 ]] || { echo "FAIL wall exit 0"; exit 1; }; echo "PASS wall-exit"
+
+      # boundary: bare ''${HOME} with no enclosing `with` → FATAL
+      o=$(nixx-shellint ${fx}/bare.nix 2>&1) || true
+      chk_has bare-fatal 'bare ''${HOME} needs a' "$o"
+
+      # clean: escaped / with-scoped / Nix-expr → no FATAL, exit 0
+      o=$(nixx-shellint --no-shellcheck ${fx}/clean.nix 2>&1); rc=$?
+      chk_not clean-no-fatal "FATAL" "$o"
+      [[ $rc -eq 0 ]] || { echo "FAIL clean nonzero"; exit 1; }; echo "PASS clean-exit"
+
+      # shellcheck pass: SC2086 → FATAL; --exclude removes it (exit 0)
+      o=$(nixx-shellint --no-nix --no-envcheck ${fx}/sc.nix 2>&1) || true
+      chk_has sc-fatal "SC2086" "$o"
+      o=$(nixx-shellint --no-nix --no-envcheck --exclude=SC2086 ${fx}/sc.nix 2>&1); rc=$?
+      chk_not sc-excluded "SC2086" "$o"
+      [[ $rc -eq 0 ]] || { echo "FAIL sc-exclude nonzero"; exit 1; }; echo "PASS sc-exclude-exit"
+
+      # env pass: required (warn) listed, block-bound names not; warns are non-fatal
+      o=$(nixx-shellint --no-nix --no-shellcheck ${fx}/env.nix 2>&1); rc=$?
+      chk_has env-apikey 'requires external env $API_KEY' "$o"
+      chk_has env-bucket 'requires external env $BUCKET' "$o"
+      chk_not env-bound  "LOCAL_TMP" "$o"
+      [[ $rc -eq 0 ]] || { echo "FAIL env warn nonzero"; exit 1; }; echo "PASS env-warn-exit"
+
+      echo "=== e2e-shellint: ALL PASSED ==="
+      touch "$out"
+    '';
 in
 {
   checks = {
@@ -712,5 +756,6 @@ in
     e2e-shell-wiring = e2eShellWiring;
     e2e-runcommand-vars = e2eRunCommandVars;
     e2e-env-list = e2eEnvList;
+    e2e-shellint = e2eShellint;
   };
 }

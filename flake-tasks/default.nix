@@ -8,6 +8,16 @@ let
   libTests = import ./lib-tests.nix { inherit mkApps nixx; };
   nixTasks = import ./nix-tasks.nix { inherit pkgs nixx; };
   e2e = import ./e2e.nix { inherit pkgs nixx forPkgs writersMkTasks; };
+
+  # dogfood: the nix-boundary pass (the differentiator) must be clean across the
+  # whole valid repo. shellcheck/envcheck are turned off here — most bash in the
+  # repo is test fixtures that intentionally aren't lint-clean; those passes are
+  # exercised on controlled fixtures by the e2e checks instead.
+  shellintCheck = writers.shellint {
+    src = ../.;
+    exclude = [ "*/result/*" "*/shellint-fixtures/*" ];
+    passes = { shellcheck = false; envcheck = false; };
+  };
 in
 rec {
   packages = {
@@ -23,7 +33,14 @@ rec {
       meta.description = "nixx ${name}";
     })
     (removeAttrs packages [ "default" ])
-  // { default = apps.test; };
+  // {
+    default = apps.test;
+    shellint = {
+      type = "app";
+      program = "${writers.shellintBin}/bin/nixx-shellint";
+      meta.description = "nixx shellint — static lint for nixx shell blocks";
+    };
+  };
 
   formatter = pkgs.nixpkgs-fmt;
 
@@ -32,5 +49,6 @@ rec {
   checks = packages // e2e.checks // {
     lib-tests = libTests;
     inherit (packages) nix-tasks;
+    shellint = shellintCheck;
   };
 }
