@@ -18,7 +18,10 @@ NIXX_TSB_PARSER="${NIXX_TSB_PARSER:-@TSB_PARSER@}"
 
 # nixx block constructors (space-padded for membership test)
 _CTORS=" bash sh py uv bun ts node deno perl ruby lua "
-_DO_NIX=1 _DO_SC=1 _DO_ENV=1 _SC_EXCLUDE="SC2154,SC2153"
+# SC2154/SC2153: external env refs are validated by env-check, not shellcheck.
+# SC2329: every body is wrapped in a never-called function so `local`/`return`
+# are valid — that wrapper trips "function never invoked".
+_DO_NIX=1 _DO_SC=1 _DO_ENV=1 _SC_EXCLUDE="SC2154,SC2153,SC2329"
 _FIX=0 _DRYRUN=0
 _FATAL=0 _WARN=0 _FIXED=0 _FIXFAIL=0
 _PATHS=()
@@ -109,7 +112,9 @@ _CAP_RE='capture: ([0-9]+ - )?([a-z]+), start: \(([0-9]+), ([0-9]+)\), end: \(([
 _TXT_RE='text: `(.*)`'
 
 # reconstruct shell text of an indented_string body slice in $1 (file) over
-# range r2..r5 (0-based rows) c3..c6 (cols); strips ''…'' and resolves ''$ '''.
+# range r2..r5 (0-based rows) c3..c6 (cols); strips ''…'', resolves ''$ ''', and
+# expands nixx interpolation markers to placeholders so shellcheck/env see valid
+# bash: @sh:q(x) → a quoted literal, @nix(x) → a bare word (its runtime form).
 _body_text() {
   local f="$1" sr="$2" sc="$3" er="$4" ec="$5"
   awk -v sr="$sr" -v sc="$sc" -v er="$er" -v ec="$ec" '
@@ -122,6 +127,7 @@ _body_text() {
     }
     END { printf "%s", out }
   ' "$f" \
+    | sed -E "s/@sh:q\([A-Za-z_][A-Za-z0-9_]*\)/'__nixx_shq__'/g; s/@nix\([A-Za-z_][A-Za-z0-9_]*\)/__nixx_val__/g" \
     | sed -e 's/^'\'''\''//' -e 's/'\'''\''$//' \
     | sed -e "s/''\\\$/\$/g" -e "s/'''/''/g"
 }

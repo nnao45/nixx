@@ -85,7 +85,7 @@ const taskOpts = [
 // shellint — static lint passes (sourced from shellint.sh)
 const shellintPasses = [
   { name: "nix-boundary", type: "fatal", description: "Shell-only expansions that break Nix (<code>${`{#x}`}</code> <code>${`{x[@]}`}</code> <code>${`{x^^}`}</code> …) must be <code>''${`{…}`}</code>; a bare <code>${`{VAR}`}</code> with no enclosing <code>with</code> fails Nix eval. Escaped <code>''${`{…}`}</code>, <code>with</code>-scoped <code>${`{VAR}`}</code>, and real Nix interpolations are skipped." },
-  { name: "shellcheck", type: "fatal", description: "The bash body (function-wrapped, so <code>local</code> is valid) is shellcheck'd. <code>$out</code>/<code>$src</code> refs (<code>SC2154</code>/<code>SC2153</code>) excluded by default; more via <code>excludeShellChecks</code>." },
+  { name: "shellcheck", type: "fatal", description: "The bash body (function-wrapped, so <code>local</code> is valid) is shellcheck'd; <code>@nix()</code>/<code>@sh:q()</code> markers are expanded to placeholders first. <code>SC2154</code>/<code>SC2153</code> (external env) and <code>SC2329</code> (the wrapper) excluded by default; more via <code>excludeShellChecks</code>." },
   { name: "env", type: "warn", description: "Lists the external env each block requires (block-bound names subtracted). Never fatal." },
 ];
 const shellintConfig = [

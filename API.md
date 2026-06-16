@@ -399,7 +399,7 @@ ignored.
 | pass | severity | what it does |
 |---|---|---|
 | **nix-boundary** | fatal | shell-only expansions that break Nix (`${#x}` `${x[@]}` `${x^^}` `${x%p}` …) must be `''${…}`; a bare `${VAR}` with no enclosing `with` will fail Nix eval. Escaped `''${…}`, `with`-scoped `${VAR}`, and real Nix interpolations (`${pkgs.hello}`) are skipped. tree-sitter-nix ERROR nodes localise the breakage even through parse cascades |
-| **shellcheck** | fatal | the bash body (wrapped in a function, so `local`/`return` are valid) is shellcheck'd. `$out`/`$src`-style build-env refs (`SC2154` / `SC2153`) are excluded by default; more via `excludeShellChecks` |
+| **shellcheck** | fatal | the bash body (wrapped in a function, so `local`/`return` are valid) is shellcheck'd. nixx's `@nix(x)` / `@sh:q(x)` markers are expanded to placeholders first, so they don't read as bash syntax errors. `SC2154`/`SC2153` (external env, validated by env-check) and `SC2329` (the function wrapper) are excluded by default; add more via `excludeShellChecks` |
 | **env** | warn | lists the external env each block requires (block-bound names subtracted), reusing the `envCheck` classifier; never fatal |
 
 Findings print as `file:line:col [pass] severity message`; a fatal makes the run
