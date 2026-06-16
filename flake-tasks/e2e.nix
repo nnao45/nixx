@@ -728,6 +728,13 @@ let
       chk_not sc-excluded "SC2086" "$o"
       [[ $rc -eq 0 ]] || { echo "FAIL sc-exclude nonzero"; exit 1; }; echo "PASS sc-exclude-exit"
 
+      # markers: @nix()/@sh:q() are expanded before shellcheck → no parse-error
+      # false positives, exit 0 (raw '@sh:q(url)' would trip SC1073/SC1036/…)
+      o=$(nixx-shellint --no-nix --no-envcheck ${fx}/markers.nix 2>&1); rc=$?
+      chk_not markers-no-sc "FATAL"  "$o"
+      chk_not markers-no-1073 "SC1073" "$o"
+      [[ $rc -eq 0 ]] || { echo "FAIL markers nonzero"; exit 1; }; echo "PASS markers-exit"
+
       # env pass: required (warn) listed, block-bound names not; warns are non-fatal
       o=$(nixx-shellint --no-nix --no-shellcheck ${fx}/env.nix 2>&1); rc=$?
       chk_has env-apikey 'requires external env $API_KEY' "$o"

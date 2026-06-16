@@ -20,8 +20,12 @@
       # System-independent outputs consumed by flake users:
       #   inputs.nixx.lib.bun ''...''
       #   inputs.nixx.lib.writers pkgs
-      #   inputs.nixx.lib.for pkgs
+      #   inputs.nixx.lib.for pkgs    (also reachable as inputs.nixx.for pkgs)
       inherit lib;
+
+      # Top-level alias so `inputs.nixx.for pkgs` works without the `.lib` hop —
+      # same function as `lib.for` / the overlay's `nixx.for`.
+      for = forPkgs;
 
       # `for pkgs` — the batteries-included namespace: lib + pkgs-bound writers
       # + `pkgs`, in ONE set meant to be brought in with `with`:
