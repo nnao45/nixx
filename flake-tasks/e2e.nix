@@ -595,6 +595,105 @@ let
         printf '%s\n' "${HOME:-unset}" > "$out"
       '';
     };
+
+  # F1 (extendShell keeps caller env/hook) + F5 (mkTasks inputsFrom) — eval-level.
+  e2eShellWiring =
+    let
+      nx = forPkgs pkgs;
+      base = pkgs.mkShell {
+        NIXX_BASE_ENV = "frombase";
+        shellHook = "echo NIXX_BASE_HOOK";
+      };
+      ifShell = pkgs.mkShell { shellHook = "echo NIXX_IF_HOOK"; };
+      t = nx.mkTasks { name = "sw"; inputsFrom = [ ifShell ]; } { a = nx.sh "echo hi\n"; };
+      ext = t.extendShell base;
+      hasInfix = pkgs.lib.hasInfix;
+    in
+    assert (ext.NIXX_BASE_ENV or null) == "frombase"; # F1: bare env survives
+    assert hasInfix "NIXX_BASE_HOOK" (ext.shellHook or ""); # F1: caller hook survives
+    assert hasInfix "NIXX_IF_HOOK" (ext.shellHook or ""); # F5: inputsFrom hook folded in
+    assert (t.devShell.drvPath != ""); # F5: devShell inputsFrom wiring evaluates
+    pkgs.runCommand "e2e-shell-wiring" { } ''
+      printf 'shell-wiring: PASSED\n'
+      touch "$out"
+    '';
+
+  # F2 (vars/@nix in runCommand) + F3 (shellcheck gate, default-on with opt-out).
+  e2eRunCommandVars =
+    let
+      nx = forPkgs pkgs;
+      # gate is ON by default; a clean body that uses @sh:q() must build + run
+      varsOut = nx.runCommand "e2e-rc-vars" { } {
+        vars = { msg = "hello from nix"; };
+        build = nx.bash ''printf '%s' @sh:q(msg) > "$out"'';
+      };
+      # opt-out: a body with a real lint finding (SC2086) builds only because the
+      # gate is disabled — proving shellcheck=false works.
+      optoutOut = nx.runCommand "e2e-rc-optout" { } {
+        shellcheck = false;
+        build = nx.bash ''
+          words="a b c"
+          # shellcheck would flag the unquoted $words (SC2086); gate is off
+          printf '%s' $words > "$out"
+        '';
+      };
+    in
+    nx.runCommand "e2e-runcommand-vars" { inherit varsOut optoutOut; } {
+      build = nx.bash ''
+        v=$(cat "$varsOut")
+        [[ "$v" == "hello from nix" ]] || { echo "FAIL vars: got '$v'"; exit 1; }
+        [[ -s "$optoutOut" ]] || { echo "FAIL optout: empty output"; exit 1; }
+        echo "runcommand-vars: PASSED"
+        touch "$out"
+      '';
+    };
+
+  # F4 (--env-list) — works even though this runner enables NO blocking env-check.
+  e2eEnvList =
+    let
+      nx = forPkgs pkgs;
+      elTasks = with nx; mkTasks { name = "el"; } {
+        needs_it = sh ''
+          echo "EL_BODY_RAN"
+          echo "key=''${API_KEY:?required}"
+          echo "opt=${OPT:-fallback}"
+        '';
+        local_ok = sh ''
+          echo "EL_BODY_RAN"
+          LOCAL_V=hi
+          echo "v=$LOCAL_V"
+        '';
+      };
+    in
+    pkgs.runCommand "e2e-env-list" { } ''
+      set -euo pipefail
+      chk_has() {
+        printf '%s' "$3" | grep -qF "$2" \
+          || { printf 'FAIL [%s]: missing %s\n%s\n' "$1" "$2" "$3" >&2; exit 1; }
+        echo "PASS [$1]"
+      }
+      chk_not() {
+        printf '%s' "$3" | grep -qF "$2" \
+          && { printf 'FAIL [%s]: unexpected %s\n%s\n' "$1" "$2" "$3" >&2; exit 1; }
+        echo "PASS [$1]"
+      }
+      EL=${elTasks.runner}/bin/el
+      unset API_KEY OPT 2>/dev/null || true
+
+      # --env-list lists required vars, skips defaulted ones, never runs the body
+      o=$("$EL" --env-list needs_it 2>&1) || { echo "FAIL: --env-list exited nonzero"; exit 1; }
+      chk_has "envlist:required" "API_KEY"     "$o"
+      chk_not "envlist:default"  "OPT"         "$o"
+      chk_not "envlist:no-body"  "EL_BODY_RAN" "$o"
+
+      # block-bound names are not listed; always available with envCheck OFF
+      o=$("$EL" --env-list local_ok 2>&1) || { echo "FAIL: --env-list local_ok nonzero"; exit 1; }
+      chk_not "envlist:not-bound" "LOCAL_V" "$o"
+      chk_has "envlist:header"    "nixx-env [local_ok]" "$o"
+
+      echo "=== e2e-env-list: ALL PASSED ==="
+      touch "$out"
+    '';
 in
 {
   checks = {
@@ -610,5 +709,8 @@ in
     e2e-packages = e2ePackages;
     e2e-env-check = e2eEnvCheck;
     e2e-wrappers = e2eWrappers;
+    e2e-shell-wiring = e2eShellWiring;
+    e2e-runcommand-vars = e2eRunCommandVars;
+    e2e-env-list = e2eEnvList;
   };
 }

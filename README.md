@@ -104,6 +104,7 @@ throws, on purpose.
 | option | level | what it does |
 |---|---|---|
 | `packages` | **global** — `mkApps { }` / `mkTasks { }` first attrset | `/bin` on PATH for **every** app/task |
+| `inputsFrom` | **global** (`mkTasks { }`) | apply other derivations' **setup hooks + build inputs** to the dev shell — for tools that need an stdenv hook (env/wiring), not just a binary on PATH. Keeps mkTasks the single source of truth |
 | `requirements` | per-block (uv) | PEP 723 inline deps |
 | `compile` | per-block (bun) | `bun --compile` → standalone binary |
 | `projectRoot` | per-block (uv/bun) | deps from `./pyproject.toml` / `package.json` |
@@ -128,11 +129,16 @@ mkTasks { name = "tasks"; envCheck = true; } {   # ← always check every bash t
 # tasks build              → always checks; aborts if OUT_DIR unset/empty
 # tasks deploy             → checks only when --env-check is passed
 # tasks --env-check deploy → checks and aborts if BUCKET unset/empty
+# tasks --env-list deploy  → just prints the env deploy needs (set/unset/empty), runs nothing
 ```
 
 The check is **blocking** — if a required variable is unset or empty, the task
-aborts before the body runs. `tree-sitter` is added to `runtimeInputs`
-automatically whenever any task opts in to `envCheck = true`.
+aborts before the body runs.
+
+`--env-list <task>` is the non-blocking companion: it prints exactly the env a
+task requires (with each var's live status) and exits without running deps or the
+body. It is **always available** — even on a runner where no task enables blocking
+`envCheck` — so `tree-sitter` ships in every runner.
 
 **What counts as "required"** — the check is a free-variable analysis, not a dumb
 grep. A var is required only if the block references it *bare* and never binds it
@@ -216,12 +222,24 @@ pkgs.mkShell {
 }
 
 runCommand "x" {} {
+  vars  = { url = "https://example.com"; };  # optional @nix()/@sh:q() interpolation
   build = bash ''
     echo ${HOME}
+    curl @sh:q(url)
     mkdir -p $out
   '';
 }
 ```
+
+`runCommand` bodies are **shellcheck-gated by default** (the lint runs as a build
+dependency, so a finding fails the build). `$out`/`$src`-style build-env refs are
+excluded automatically; opt out per call with `shellcheck = false`, or allow
+specific codes with `excludeShellChecks = [ "SC2086" ]`. `shellHook` / `runCommand`
+also accept a reserved `vars` attr for `@nix()` / `@sh:q()` interpolation.
+
+`extendShell` folds the runner into *your* shell while **preserving its env vars
+and shellHook** (it overrides your shell rather than only pulling its build
+inputs).
 
 **devenv** (`examples/devenv`) — devenv owns the environment, nixx owns the
 scripting; feed body `.text` into `enterShell` / `scripts.<n>.exec` (Nix strings

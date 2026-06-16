@@ -527,10 +527,39 @@ let
               ++ map groupSection allGroups;
           in
           concatStringsSep "\n  printf '\\n'\n" sections;
+      # `--env-list <task>` reports the env a task requires (using the same
+      # classifier as env-check, in list mode) and exits, without running deps or
+      # the body. One case per task: bash tasks feed their body to the classifier,
+      # other languages just say there's nothing to analyse.
+      envListCases = concatStringsSep "\n" (map
+        (n:
+          let
+            t = full.${n};
+            lang = t.__lang or "bash";
+            isParallel = t.__parallel or false;
+            eot = "_NIXX_LIST_${name}_${n}";
+          in
+          if (lang == "bash" || lang == "sh") && !isParallel
+          then
+            "    ${n}) _nixx_env_check " + shq n + " <<'" + eot + "'\n"
+            + chopNL (stripShebang t.text) + "\n" + eot + "\n      ;;"
+          else
+            "    ${n}) printf 'nixx-env [%s]: no shell env analysis (%s task)\\n' "
+            + shq n + " " + shq lang + " ;;")
+        names);
       flagPreamble =
         if envCheckHookText != "" then ''
           _NIXX_ENV_CHECK=0
           if [[ "''${1:-}" == "--env-check" ]]; then _NIXX_ENV_CHECK=1; shift; fi
+          if [[ "''${1:-}" == "--env-list" ]]; then
+            _NIXX_ENV_MODE=list; shift
+            case "''${1:-}" in
+          ${envListCases}
+            ""|-l|--list|help) echo "usage: ${name} --env-list <task>" >&2; exit 1 ;;
+            *) echo "unknown task: ''${1:-}" >&2; exit 1 ;;
+            esac
+            exit 0
+          fi
         '' else "";
     in
     ''
@@ -769,15 +798,19 @@ let
   #
   # Prefer the conventional `hook` attr, but accept any single attr so wrappers
   # can read naturally, e.g. runCommand "x" {} { build = bash ''...''; }.
+  # A reserved `vars` attr enables @nix()/@sh:q() interpolation in the body,
+  # matching mkTasks/mkScript; it is stripped before the single-block detection.
   shellHook = hookAttrs:
     let
-      names = attrNames hookAttrs;
+      vars = hookAttrs.vars or { };
+      blockAttrs = removeAttrs hookAttrs [ "vars" ];
+      names = attrNames blockAttrs;
       name =
-        if hookAttrs ? hook then "hook"
+        if blockAttrs ? hook then "hook"
         else if length names == 1 then head names
         else throw "nixx.shellHook: expected `{ hook = bash ''...''; }` or a single bash block attr";
     in
-    (mkTasks { } hookAttrs).tasks.${name}.text;
+    (mkTasks { inherit vars; } blockAttrs).tasks.${name}.text;
 
 in
 {
