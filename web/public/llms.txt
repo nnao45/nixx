@@ -1,8 +1,8 @@
 # nixx
 
-> Write real shell, JavaScript, Python, and TypeScript inside Nix — without escaping ${}.
+> Raw shell in Nix: escape-light AND statically checked.
 
-nixx is a Nix library. Script bodies are stored as Nix indented strings ('' … '') and read from SOURCE rather than evaluated, so a ${VAR} inside a body belongs to the target language (shell, JS, …), not to Nix. No preprocessor, no codegen; files stay valid .nix so nil/nixd never error. It ships store binaries (mkApps) and a just-style task runner (mkTasks).
+nixx is a Nix library built on two pillars that need each other. (1) Escape-light: script bodies are stored as Nix indented strings ('' … '') and read from SOURCE rather than evaluated, so a ${VAR} inside a body belongs to the target language (shell, JS, …), not to Nix — no preprocessor, no codegen, files stay valid .nix so nil/nixd never error. (2) Statically checked: that raw embedded shell would otherwise be opaque to your tools, so `shellint` reads it back — running shellcheck on the body AND guarding the one boundary the escape-light path leaves behind (the few ${…} forms that still need an '' escape, and bare ${VAR} that needs a `with`). It ships store binaries (mkApps), a just-style task runner (mkTasks), and the shellint linter.
 
 ## Install
 
@@ -62,6 +62,17 @@ mkTasks { vars = { port = 3000; name = "world"; }; } {
 }
 ```
 
+Lint the embedded shell (shellint) — source-driven, no eval; three passes: nix-boundary (a ${…} that needs an '' escape, or a bare ${VAR} with no `with`), shellcheck (the bash body), env (required external env per block):
+
+```sh
+nix run nixx#shellint -- ./
+```
+```nix
+checks.shellint = (inputs.nixx.lib.for pkgs).shellint { src = ./.; };
+```
+
+The runtime sibling is `envCheck` (a mkTasks option): it aborts a task before it runs if a required env var is unset/empty; `tasks --env-list <task>` just prints what a task needs. shellint reports statically; envCheck enforces at run time.
+
 ## Caveats (gotchas)
 
 - **${} is the language's, not Nix's.** A bare ${HOME} in a body is shell — never write ''${HOME}. To inject a Nix value, use a marker: @nix(x) raw (paths/derivations/numbers), @sh:q(x) bash-quoted (strings). Those are the only two; for a non-bash body pass values via `env`. Native Nix ${...} interpolation does not run in a source-read body.
@@ -69,7 +80,7 @@ mkTasks { vars = { port = 3000; name = "world"; }; } {
 - **The `with` defers undefined-variable checking.** A typo in never-evaluated code under `with inputs.nixx.lib.for pkgs;` is not caught statically — keep the `with` scoped to the flake output that builds your tasks; evaluated code still errors clearly at runtime.
 - **Use `inputs.nixx.lib.for pkgs`, not bare `nixx.lib.for`** (unless you have bound `nixx = inputs.nixx`).
 - **mkApps ships 6 languages:** bash, uv (python), bun (ts), node, ts (tsx), deno. py / perl / ruby / lua have no binary builder — use them as task or script bodies (mkTasks / mkScripts), not mkApps.
-- **A few shell forms still need the '' prefix:** ${ARR[@]}, ${#VAR}, ${VAR%x}, ${VAR#x} are not valid Nix inside ${…} (rejected at parse time, before any source read), so write ''${ARR[@]}. Common forms (${VAR}, $VAR, $@, ${VAR:-default}, ${VAR/old/new}) need no prefix.
+- **A few shell forms still need the '' prefix:** ${ARR[@]}, ${#VAR}, ${VAR%x}, ${VAR#x} are not valid Nix inside ${…} (rejected at parse time, before any source read), so write ''${ARR[@]}. Common forms (${VAR}, $VAR, $@, ${VAR:-default}, ${VAR/old/new}) need no prefix. Forget one (or a bare ${VAR} with no `with`)? shellint's nix-boundary pass points at the exact file:line — that's the whole reason it exists.
 - **Two PATHs in a dev shell.** Anything a task body calls goes in `mkTasks { packages }` — it resolves via `nix run .#tasks` AND at the `nix develop` prompt. `pkgs.mkShell { packages }` is only for tools you type at the prompt and no task calls; a mkShell-only package is absent from `nix run .#tasks`.
 - **Flakes only see git-tracked files.** New files must be `git add` (or `git add -N`) before `nix build` / `nix run` sees them.
 
