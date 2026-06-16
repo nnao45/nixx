@@ -356,7 +356,7 @@ let
   # task body and any child interpreter it spawns.
   # envCheckDefault is the global env-check mode (false | true) used as
   # the fallback for any task that doesn't set its own `envCheck` block opt.
-  mkRunnerText = name: defaultDeps: full: envCheckHookText: envCheckDefault:
+  mkRunnerText = name: defaultDeps: full: envCheckHookText: envCheckDefault: shellCheckHookText: shellCheckDefault:
     let
       names = attrNames full;
       indentBody = t: concatStringsSep "\n"
@@ -450,6 +450,33 @@ let
                 + callLines
                 + "  fi\n"
             else "";
+          shellCheckCall =
+            let
+              # per-task shellCheck (true | false) overrides the global default;
+              # true  — always run shellcheck before this task
+              # false — run only when the runner is invoked with --shell-check
+              scv = t.shellCheck or shellCheckDefault;
+              alwaysCheck =
+                if scv == true then true
+                else if scv == false then false
+                else throw "nixx: task '${n}' shellCheck must be true | false";
+            in
+            if shellCheckHookText != "" && isBash && !isParallel
+            then
+              let
+                eot = "_NIXX_SC_${name}_${n}";
+                checkBody = chopNL (stripShebang t.text);
+                callLines =
+                  "  _nixx_shell_check " + shq n + " <<'" + eot + "'\n"
+                  + checkBody + "\n"
+                  + eot + "\n";
+              in
+              if alwaysCheck then callLines
+              else
+                "  if [[ \"$_NIXX_SHELL_CHECK\" == \"1\" ]]; then\n"
+                + callLines
+                + "  fi\n"
+            else "";
           # parallel task: spawn each listed task in a subshell, wait for all.
           parallelFn =
             let
@@ -472,7 +499,7 @@ let
         in
         if isParallel then parallelFn
         else "task_${n}() {\n" + guard + depsLines + strictLine + envLines
-          + resetCwdLine + cwdLine + envCheckCall + bodyRun + "}\n";
+          + resetCwdLine + cwdLine + envCheckCall + shellCheckCall + bodyRun + "}\n";
       # dispatcher used by needs: maps a task name to its function.
       dispatch = "_nixx_run() {\n  case \"$1\" in\n"
         + concatStringsSep "" (map (n: "    ${n}) task_${n} ;;\n") names)
@@ -528,10 +555,14 @@ let
           in
           concatStringsSep "\n  printf '\\n'\n" sections;
       flagPreamble =
-        if envCheckHookText != "" then ''
+        (if envCheckHookText != "" then ''
           _NIXX_ENV_CHECK=0
           if [[ "''${1:-}" == "--env-check" ]]; then _NIXX_ENV_CHECK=1; shift; fi
-        '' else "";
+        '' else "")
+        + (if shellCheckHookText != "" then ''
+          _NIXX_SHELL_CHECK=0
+          if [[ "''${1:-}" == "--shell-check" ]]; then _NIXX_SHELL_CHECK=1; shift; fi
+        '' else "");
     in
     ''
       #!/usr/bin/env bash
@@ -541,6 +572,7 @@ let
       _NIXX_CWD="$PWD"
 
       ${envCheckHookText}
+      ${shellCheckHookText}
       ${flagPreamble}
       ${dispatch}
       ${concatStringsSep "\n" (map fnFor names)}
@@ -560,6 +592,8 @@ let
     , env ? { }
     , envCheckHookText ? ""
     , envCheckDefault ? false
+    , shellCheckHookText ? ""
+    , shellCheckDefault ? false
     }: taskAttrs:
     let
       full = builtins.mapAttrs
@@ -584,7 +618,7 @@ let
     in
     {
       tasks = full;
-      runner = mkRunnerText name defaultDeps full envCheckHookText envCheckDefault;
+      runner = mkRunnerText name defaultDeps full envCheckHookText envCheckDefault shellCheckHookText shellCheckDefault;
       meta = map
         (n:
           let

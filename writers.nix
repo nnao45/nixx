@@ -72,6 +72,18 @@ rec {
         (builtins.attrValues taskDefs);
       envCheckEnabled = envCheckVal != false || anyTaskEnvCheck;
       treeSitterBash = pkgs.tree-sitter-grammars.tree-sitter-bash;
+      # shellCheck: set GLOBALLY here (applies to every bash task as default)
+      # AND/OR PER-BLOCK via `bash ''body'' { shellCheck = ...; }`. A per-block
+      # value overrides the global default for that task:
+      #   false (default) — check only when the runner is invoked with --shell-check
+      #   true            — always run shellcheck before this bash task
+      shellCheckVal =
+        let v = opts.shellCheck or false; in
+        if v == false || v == true then v
+        else throw "nixx.mkTasks: shellCheck must be true | false";
+      anyTaskShellCheck = lib.any (b: (b.shellCheck or false) == true)
+        (builtins.attrValues taskDefs);
+      shellCheckEnabled = shellCheckVal != false || anyTaskShellCheck;
       envCheckHookText =
         if !envCheckEnabled then ""
         else ''
@@ -142,13 +154,36 @@ rec {
             return 0
           }
         '';
+      shellCheckHookText =
+        if !shellCheckEnabled then ""
+        else ''
+          _nixx_shell_check() {
+            local _nixx_task="$1" _nixx_tmp _nixx_ret=0
+            _nixx_tmp=$(mktemp /tmp/nixx-sc-XXXXXX.sh)
+            cat > "$_nixx_tmp"
+            printf 'nixx-shell [%s]:\n' "$_nixx_task" >&2
+            if shellcheck --shell=bash "$_nixx_tmp" >&2; then
+              printf 'nixx-shell [%s]: ok\n' "$_nixx_task" >&2
+            else
+              _nixx_ret=1
+              printf 'nixx-shell: aborting task %s — shellcheck found issues above\n' \
+                "$_nixx_task" >&2
+            fi
+            rm -f "$_nixx_tmp"
+            return "$_nixx_ret"
+          }
+        '';
       result = nixx.mkTasks
-        (lib.removeAttrs opts [ "packages" "envCheck" ] // {
+        (lib.removeAttrs opts [ "packages" "envCheck" "shellCheck" ] // {
           inherit envCheckHookText;
           envCheckDefault = envCheckVal;
+          inherit shellCheckHookText;
+          shellCheckDefault = shellCheckVal;
         })
         taskDefs;
-      runtimeInputs = pkgList ++ lib.optional envCheckEnabled pkgs.tree-sitter;
+      runtimeInputs = pkgList
+        ++ lib.optional envCheckEnabled pkgs.tree-sitter
+        ++ lib.optional shellCheckEnabled pkgs.shellcheck;
       runner = pkgs.writeShellApplication {
         inherit name;
         runtimeInputs = runtimeInputs;
