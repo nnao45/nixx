@@ -96,8 +96,14 @@ a generic Nix linter can't — because only nixx knows the string is shell:
 
 ```sh
 nix run nixx#shellint -- ./           # lint a tree (or files)
-nix run nixx#shellint -- --no-shellcheck src/
+nix run nixx#shellint -- --fix ./     # auto-fix the boundary: add/remove '' as needed
+nix run nixx#shellint -- --fix --dry-run ./   # preview the fixes as a diff
 ```
+
+`--fix` is the bidirectional normalizer for the boundary: it **escapes** a
+shell-only `${…}` that needs it (`${#x}` → `''${#x}`) and **de-escapes** an `''${VAR}`
+that doesn't (back to `${VAR}`, only under a `with`). Each fixed file is re-parsed
+afterward and reverted if it isn't clean — so a fix can never leave you worse off.
 ```nix
 # gate it in your own flake
 checks.shellint = (inputs.nixx.lib.for pkgs).shellint {

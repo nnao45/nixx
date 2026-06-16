@@ -19,7 +19,8 @@ NIXX_TSB_PARSER="${NIXX_TSB_PARSER:-@TSB_PARSER@}"
 # nixx block constructors (space-padded for membership test)
 _CTORS=" bash sh py uv bun ts node deno perl ruby lua "
 _DO_NIX=1 _DO_SC=1 _DO_ENV=1 _SC_EXCLUDE="SC2154,SC2153"
-_FATAL=0 _WARN=0
+_FIX=0 _DRYRUN=0
+_FATAL=0 _WARN=0 _FIXED=0 _FIXFAIL=0
 _PATHS=()
 _EXCLUDE_PATHS=()
 
@@ -28,6 +29,8 @@ for _a in "$@"; do
     --no-nix) _DO_NIX=0 ;;
     --no-shellcheck) _DO_SC=0 ;;
     --no-envcheck) _DO_ENV=0 ;;
+    --fix) _FIX=1 ;;
+    --dry-run) _DRYRUN=1 ;;
     --exclude=*) _SC_EXCLUDE="$_SC_EXCLUDE,${_a#--exclude=}" ;;
     --exclude-path=*) _EXCLUDE_PATHS+=("${_a#--exclude-path=}") ;;
     *) _PATHS+=("$_a") ;;
@@ -88,7 +91,8 @@ _overlap() {
 _NIX_Q='(apply_expression function: (_) @fn argument: (indented_string_expression) @body) @call
 (interpolation) @interp
 (ERROR) @err
-(with_expression) @with'
+(with_expression) @with
+(dollar_escape) @desc'
 
 _BASH_REQ_Q='(simple_expansion) @ref
 (expansion) @ref
@@ -285,6 +289,219 @@ lint_file() {
     fi
   done
 }
+
+# ============================ --fix ============================
+# read 0-based line ROW from FILE
+_line_at() { awk -v r="$1" 'NR-1==r{print; exit}' "$2"; }
+
+# extract the shell expansion starting at byte COL of LINE ($1=line $2=col)
+_DB=$'\x24{'   # literal "${" without tripping SC2016
+_exp_at() {
+  local line="$1" col="$2" rest inner
+  rest="${line:col}"
+  if [[ "$rest" == "$_DB"* ]]; then
+    inner="${rest#"$_DB"}"; inner="${inner%%\}*}"; printf '%s%s}' "$_DB" "$inner"
+  elif [[ "$rest" =~ ^(\$[A-Za-z_][A-Za-z0-9_]*) ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  fi
+}
+
+# safe to de-escape ''$VAR / ''${VAR} / ''${VAR:-simple} → drop the '' ?
+_safe_deescape() {
+  local e="$1"
+  [[ "$e" =~ ^\$[A-Za-z_][A-Za-z0-9_]*$ ]] && return 0
+  [[ "$e" =~ ^\$\{[A-Za-z_][A-Za-z0-9_]*\}$ ]] && return 0
+  [[ "$e" =~ ^\$\{[A-Za-z_][A-Za-z0-9_]*:[-=?+][A-Za-z0-9_./\ -]*\}$ ]] && return 0
+  return 1
+}
+
+# does this ${...} text carry a shell-only / parse-wall char ?
+_is_parsewall() {
+  local e="$1"
+  [[ "$e" == *'#'* ]] && return 0
+  [[ "$e" == *'^'* ]] && return 0
+  [[ "$e" == *'%'* ]] && return 0
+  [[ "$e" == *','* ]] && return 0
+  [[ "$e" =~ \[[@*-] ]] && return 0   # ${ARR[@]} ${ARR[*]} ${ARR[-1]}
+  return 1
+}
+
+# count ERROR nodes tree-sitter-nix sees in FILE
+_count_errors() {
+  local o
+  o=$(tree-sitter query --lib-path "$NIXX_TSN_PARSER" --lang-name nix \
+      <(printf '(ERROR) @e') "$1" 2>/dev/null) || return 0
+  printf '%s' "$o" | grep -c 'capture:'
+}
+
+# apply edits (parallel arrays _er/_ec/_edel/_eins) to FILE → stdout new content.
+# edits are single-line; applied right-to-left within each row.
+_apply_edits() {
+  local f="$1" n=${#_er[@]} i row col del ins
+  local -a lines=()
+  mapfile -t lines < "$f"
+  # process rows that have edits; within a row, descending col
+  local -a order=()
+  for (( i=0; i<n; i++ )); do order+=("$i"); done
+  # simple selection: sort indices by (row asc, col desc)
+  local a b tmp
+  for (( a=0; a<n; a++ )); do for (( b=a+1; b<n; b++ )); do
+    if (( _er[order[b]] < _er[order[a]] )) || \
+       (( _er[order[b]] == _er[order[a]] && _ec[order[b]] > _ec[order[a]] )); then
+      tmp=${order[a]}; order[a]=${order[b]}; order[b]=$tmp
+    fi
+  done; done
+  for i in "${order[@]}"; do
+    row=${_er[i]}; col=${_ec[i]}; del=${_edel[i]}; ins=${_eins[i]}
+    lines[row]="${lines[row]:0:col}${ins}${lines[row]:col+del}"
+  done
+  printf '%s\n' "${lines[@]}"
+}
+
+fix_file() {
+  local f="$1" out line name sr sc er ec txt
+  out=$(tree-sitter query --lib-path "$NIXX_TSN_PARSER" --lang-name nix \
+        <(printf '%s' "$_NIX_Q") "$f" 2>/dev/null) || return 0
+  local -a c_sr=() c_sc=() c_er=() c_ec=() c_fn=()
+  local -a b_sr=() b_sc=() b_er=() b_ec=()
+  local -a w_sr=() w_sc=() w_er=() w_ec=()
+  local -a i_sr=() i_sc=() i_er=() i_ec=() i_tx=()
+  local -a e_sr=() e_sc=() e_er=() e_ec=()
+  local -a d_sr=() d_sc=() d_er=() d_ec=()
+  while IFS= read -r line; do
+    [[ "$line" =~ $_CAP_RE ]] || continue
+    name="${BASH_REMATCH[2]}"; sr="${BASH_REMATCH[3]}"; sc="${BASH_REMATCH[4]}"
+    er="${BASH_REMATCH[5]}"; ec="${BASH_REMATCH[6]}"
+    txt=""; [[ "$line" =~ $_TXT_RE ]] && txt="${BASH_REMATCH[1]}"
+    case "$name" in
+      call) c_sr+=("$sr"); c_sc+=("$sc"); c_er+=("$er"); c_ec+=("$ec"); c_fn+=("")
+            b_sr+=("-1"); b_sc+=("-1"); b_er+=("-1"); b_ec+=("-1") ;;
+      fn)   c_fn[${#c_fn[@]} - 1]="$txt" ;;
+      body) local _bx=$(( ${#b_sr[@]} - 1 ))
+            b_sr[_bx]="$sr"; b_sc[_bx]="$sc"; b_er[_bx]="$er"; b_ec[_bx]="$ec" ;;
+      with) w_sr+=("$sr"); w_sc+=("$sc"); w_er+=("$er"); w_ec+=("$ec") ;;
+      interp) i_sr+=("$sr"); i_sc+=("$sc"); i_er+=("$er"); i_ec+=("$ec"); i_tx+=("$txt") ;;
+      err)  e_sr+=("$sr"); e_sc+=("$sc"); e_er+=("$er"); e_ec+=("$ec") ;;
+      desc) d_sr+=("$sr"); d_sc+=("$sc"); d_er+=("$er"); d_ec+=("$ec") ;;
+    esac
+  done <<< "$out"
+
+  local nb=${#c_sr[@]} ni=${#i_sr[@]} ne=${#e_sr[@]} nw=${#w_sr[@]} nd=${#d_sr[@]}
+  local bi ii ei wi di in_b has_with exp lr
+  _er=() _ec=() _edel=() _eins=()   # edit arrays (row col del ins)
+
+  _block_of() {  # which ctor block body contains range $1..$4 ? → sets REPLY=index|-1
+    local r=-1 b
+    for (( b=0; b<nb; b++ )); do
+      _is_ctor "${c_fn[b]}" || continue
+      if _contains "${b_sr[b]}" "${b_sc[b]}" "${b_er[b]}" "${b_ec[b]}" "$1" "$2" "$3" "$4"; then r=$b; break; fi
+    done
+    REPLY=$r
+  }
+  _block_has_with() {  # block index $1 enclosed by a with ?
+    local b=$1 w
+    for (( w=0; w<nw; w++ )); do
+      _contains "${w_sr[w]}" "${w_sc[w]}" "${w_er[w]}" "${w_ec[w]}" \
+                "${c_sr[b]}" "${c_sc[b]}" "${c_er[b]}" "${c_ec[b]}" && return 0
+    done
+    return 1
+  }
+
+  # (1) de-escape: ''$VAR / ''${safe} inside a with-covered ctor block → drop ''
+  for (( di=0; di<nd; di++ )); do
+    _block_of "${d_sr[di]}" "${d_sc[di]}" "${d_er[di]}" "${d_ec[di]}"; in_b=$REPLY
+    [[ $in_b -lt 0 ]] && continue
+    _block_has_with "$in_b" || continue
+    lr=$(_line_at "${d_sr[di]}" "$f")
+    exp=$(_exp_at "$lr" "${d_ec[di]}")          # text right after the ''
+    [[ -z "$exp" ]] && continue
+    _safe_deescape "$exp" || continue
+    _er+=("${d_sr[di]}"); _ec+=("${d_sc[di]}"); _edel+=(2); _eins+=("")
+  done
+
+  # (2) escape interps: a parse-wall form (always invalid Nix → escape), or a
+  # bare ${VAR} in a block with no enclosing `with`. We key off the interp's OWN
+  # text, not mere err-overlap — a `#` cascade can drape an ERROR over an innocent
+  # neighbouring ${pkgs.foo} interpolation, which must stay untouched.
+  for (( ii=0; ii<ni; ii++ )); do
+    _block_of "${i_sr[ii]}" "${i_sc[ii]}" "${i_er[ii]}" "${i_ec[ii]}"; in_b=$REPLY
+    [[ $in_b -lt 0 ]] && continue
+    local do_esc=0
+    if _is_parsewall "${i_tx[ii]}"; then
+      do_esc=1
+    elif [[ "${i_tx[ii]}" =~ ^\$\{[A-Za-z_][A-Za-z0-9_]*\}$ ]]; then
+      _block_has_with "$in_b" || do_esc=1
+    fi
+    [[ $do_esc -eq 1 ]] && { _er+=("${i_sr[ii]}"); _ec+=("${i_sc[ii]}"); _edel+=(0); _eins+=("''"); }
+  done
+
+  # (3) escape #-cascade: raw-scan err rows for unescaped ${parse-wall}. No block
+  # gate — a `#` cascade destroys the block node, so containment can't be checked;
+  # only parse-wall forms are touched and the post-fix verify reverts any misfire.
+  for (( ei=0; ei<ne; ei++ )); do
+    local r c ln off pre mexp
+    for (( r=e_sr[ei]; r<=e_er[ei]; r++ )); do
+      ln=$(_line_at "$r" "$f")
+      c=0
+      while [[ "${ln:c}" == *"$_DB"* ]]; do
+        pre="${ln:c}"; off="${pre%%"$_DB"*}"; c=$(( c + ${#off} ))
+        # skip if preceded by ' (already ''-escaped)
+        if [[ $c -gt 0 && "${ln:c-1:1}" == "'" ]]; then c=$(( c + 2 )); continue; fi
+        mexp=$(_exp_at "$ln" "$c")
+        if [[ -n "$mexp" ]] && _is_parsewall "$mexp"; then
+          _er+=("$r"); _ec+=("$c"); _edel+=(0); _eins+=("''")
+        fi
+        c=$(( c + 2 ))
+      done
+    done
+  done
+
+  local nedit=${#_er[@]}
+  [[ $nedit -eq 0 ]] && return 0
+
+  # dedup edits by (row,col)
+  local -a u_r=() u_c=() u_d=() u_i=() seen=""
+  local k key
+  for (( k=0; k<nedit; k++ )); do
+    key="${_er[k]}:${_ec[k]}"
+    case " $seen " in *" $key "*) continue ;; esac
+    seen+=" $key"
+    u_r+=("${_er[k]}"); u_c+=("${_ec[k]}"); u_d+=("${_edel[k]}"); u_i+=("${_eins[k]}")
+  done
+  _er=("${u_r[@]}"); _ec=("${u_c[@]}"); _edel=("${u_d[@]}"); _eins=("${u_i[@]}")
+  nedit=${#_er[@]}
+
+  local newc; newc=$(_apply_edits "$f")   # command sub strips the trailing \n; re-add on write
+  if [[ $_DRYRUN -eq 1 ]]; then
+    printf '=== %s (%d fix%s) ===\n' "$f" "$nedit" "$([[ $nedit -eq 1 ]] || printf es)"
+    diff -u "$f" <(printf '%s\n' "$newc") || true
+    _FIXED=$(( _FIXED + nedit ))
+    return 0
+  fi
+  # write, then verify: a fix must leave the file ERROR-free, else revert
+  local bak; bak=$(mktemp); cp "$f" "$bak"
+  printf '%s\n' "$newc" > "$f"
+  if [[ "$(_count_errors "$f")" -ne 0 ]]; then
+    cp "$bak" "$f"; rm -f "$bak"
+    printf 'nixx-shellint: %s — could not auto-fix safely (reverted)\n' "$f" >&2
+    _FIXFAIL=$(( _FIXFAIL + 1 ))
+    return 0
+  fi
+  rm -f "$bak"
+  printf 'fixed %s (%d edit%s)\n' "$f" "$nedit" "$([[ $nedit -eq 1 ]] || printf s)"
+  _FIXED=$(( _FIXED + nedit ))
+}
+
+if [[ $_FIX -eq 1 ]]; then
+  for _f in "${_FILES[@]}"; do fix_file "$_f"; done
+  if [[ $_DRYRUN -eq 1 ]]; then
+    printf '\nnixx-shellint --fix --dry-run: %d edit(s) across %d files\n' "$_FIXED" "${#_FILES[@]}" >&2
+  else
+    printf '\nnixx-shellint --fix: %d edit(s) applied, %d file(s) reverted\n' "$_FIXED" "$_FIXFAIL" >&2
+  fi
+  [[ $_FIXFAIL -gt 0 ]] && exit 1
+  exit 0
+fi
 
 for _f in "${_FILES[@]}"; do lint_file "$_f"; done
 

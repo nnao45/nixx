@@ -66,10 +66,13 @@ Lint the embedded shell (shellint) — source-driven, no eval; three passes: nix
 
 ```sh
 nix run nixx#shellint -- ./
+nix run nixx#shellint -- --fix ./        # auto-fix the boundary (--dry-run to preview)
 ```
 ```nix
 checks.shellint = (inputs.nixx.lib.for pkgs).shellint { src = ./.; };
 ```
+
+`--fix` is a bidirectional normalizer: it escapes a shell-only ${…} that breaks Nix (${#x} → ''${#x}) and de-escapes an ''${VAR} that doesn't (back to ${VAR}, only under a `with`). Each fixed file is re-parsed and reverted if not clean, so it can't corrupt your source. App-only; the check stays read-only.
 
 The runtime sibling is `envCheck` (a mkTasks option): it aborts a task before it runs if a required env var is unset/empty; `tasks --env-list <task>` just prints what a task needs. shellint reports statically; envCheck enforces at run time.
 
