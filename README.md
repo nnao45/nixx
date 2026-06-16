@@ -107,7 +107,7 @@ throws, on purpose.
 | `requirements` | per-block (uv) | PEP 723 inline deps |
 | `compile` | per-block (bun) | `bun --compile` → standalone binary |
 | `projectRoot` | per-block (uv/bun) | deps from `./pyproject.toml` / `package.json` |
-| `envCheck` | **global** (`mkTasks { }`) **or** per-block (bash tasks) | before running, parse the task body with tree-sitter and report unset / empty env vars; if any ERROR is found, **abort** the task. `false` (default) = check only with `--env-check`, `true` = always check |
+| `envCheck` | **global** (`mkTasks { }`) **or** per-block (bash tasks) | before running, parse the task body with tree-sitter and **abort** if a *required* env var is unset/empty. `false` (default) = check only with `--env-check`, `true` = always check |
 
 `envCheck` can be set globally as the default for every bash task, then overridden
 per-block. `--env-check` passed to the runner runs the check on **all** bash blocks,
@@ -130,9 +130,26 @@ mkTasks { name = "tasks"; envCheck = true; } {   # ← always check every bash t
 # tasks --env-check deploy → checks and aborts if BUCKET unset/empty
 ```
 
-The check is **blocking** — if any referenced variable is unset or empty, the task
-aborts with an error before the body runs. `tree-sitter` is added to `runtimeInputs`
+The check is **blocking** — if a required variable is unset or empty, the task
+aborts before the body runs. `tree-sitter` is added to `runtimeInputs`
 automatically whenever any task opts in to `envCheck = true`.
+
+**What counts as "required"** — the check is a free-variable analysis, not a dumb
+grep. A var is required only if the block references it *bare* and never binds it
+itself:
+
+| in the body | treated as | why |
+|---|---|---|
+| `$VAR` / `${VAR}` | **required** (must be set & non-empty) | a bare reference is an external dependency |
+| `${VAR:?msg}` / `${VAR?msg}` | **required** ( `:?` also rejects empty ) | the author declared it mandatory |
+| `${VAR:-x}` `${VAR:=x}` `${VAR:+x}` `${VAR-x}` | skipped | a default/assignment handles the missing case — this is also the **opt-out**: write `${VAR:-}` to allow empty |
+| `${#VAR}` `${!VAR}` `${VAR#p}` `${VAR%p}` … | skipped | length / indirection / transforms, not a plain dependency |
+| `${A:-$B}` (nested) | neither A nor B | `B` is only the fallback value |
+| `VAR=…`, `export VAR`, `for VAR in …`, `read VAR` | skipped | the block assigns it, so it isn't external |
+
+Because bare references to external env vars are intentional here, enabling
+`envCheck` also tells `shellcheck` to stop flagging them (`SC2154` / `SC2153`) for
+that runner — `envCheck` becomes the runtime counterpart to the static check.
 
 The same call form attaches task options in `mkTasks`
 (`bash ''…'' { deps = [ … ]; env = { … }; cwd = ./d; }`). Everything else (full
