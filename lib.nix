@@ -49,6 +49,11 @@ let
     if xs == [ ] then [ ] else if p (head xs) then dropStart p (tail xs) else xs;
   dropEnd = p: xs: reverse (dropStart p (reverse xs));
 
+  # merge a list of attrsets left-to-right (rightmost keys win)
+  mergeAttrs = xs: foldl' (a: b: a // b) { } xs;
+  # { key = value; } only when value isn't null — keeps generated config clean
+  optionalAttr = k: v: if v == null then { } else { ${k} = v; };
+
   # strip surrounding blank lines + common leading indentation
   dedentInfo = s:
     let
@@ -812,8 +817,120 @@ let
     in
     (mkTasks { inherit vars; } blockAttrs).tasks.${name}.text;
 
+  # ---- process-compose config generation (pure) ----
+  # processCompose turns a set of nixx bash blocks into a process-compose config
+  # attrset — the input to `process-compose -f <json> up`, which supplies the
+  # orchestration process-compose is built for: concurrent startup, depends_on
+  # readiness gating, ordered graceful shutdown, restart policies, and liveness/
+  # readiness probes. Bodies are source-read (shell ${VAR} survives verbatim),
+  # then writers.processCompose serializes the attrset to JSON and runs it.
+  #
+  # `disable_env_expansion` is set so process-compose does NOT envsubst the
+  # command — a shell ${VAR} reaches bash raw and expands from the process
+  # environment (the same model as every other nixx bash block).
+  #
+  # Per-process options attach via the block functor (same idiom as mkTasks):
+  #   cwd         path|string                         -> working_dir
+  #   env         attrset { K = V; }                   -> environment [ "K=V" ]
+  #   depends_on  [ "db" ]                             -> depends_on { db.condition = process_healthy }
+  #   readiness   { exec="pg_isready"; }
+  #               { http={ port=5432; host?; path?; scheme?; }; timing...; }
+  #                                                      -> readiness_probe
+  #   restart     "on_failure" | "exit_on_failure" | "always" | "no"
+  #                                                      -> availability.restart
+  #   description string                               -> description
+  #   namespace   string                               -> namespace
+  #   shutdown    attrset { signal; timeout_seconds; command; } -> shutdown
+  #
+  # lib.processCompose is pure; writers.processCompose wraps it with pkgs into a
+  # runnable derivation (+ devShell), mirroring the mkTasks split.
+  processCompose =
+    { vars ? { }
+    , env ? { }
+    }: procAttrs:
+    let
+      validRestart = [ "on_failure" "exit_on_failure" "always" "no" ];
+      # nixx `env` attrset -> process-compose `environment` list of "K=V"
+      asEnvList = e: map (k: k + "=" + toString e.${k}) (attrNames e);
+      # nixx `depends_on` [ names ] -> pc `depends_on` { name.condition = process_healthy }
+      dependsMap = ds:
+        builtins.listToAttrs
+          (map (d: { name = d; value = { condition = "process_healthy"; }; }) ds);
+      # nixx `readiness` shorthand -> pc `readiness_probe`
+      readinessProbe = r:
+        if !(isAttrs r) then
+          throw "nixx.processCompose: readiness must be an attrset"
+        else if r ? exec then
+          mergeAttrs [{ exec = { command = r.exec; }; } (probeTiming r)]
+        else if r ? http then
+          mergeAttrs [{ http_get = httpGet r.http; } (probeTiming r)]
+        else
+          throw "nixx.processCompose: readiness needs `exec` or `http`";
+      httpGet = h:
+        if !(h ? port) then
+          throw "nixx.processCompose: readiness.http needs `port`"
+        else
+          mergeAttrs [
+            { port = toString h.port; }
+            (optionalAttr "host" (h.host or null))
+            (optionalAttr "path" (h.path or null))
+            (optionalAttr "scheme" (h.scheme or null))
+          ];
+      probeTiming = r:
+        mergeAttrs
+          (map (k: optionalAttr k (r.${k} or null))
+            [
+              "initial_delay_seconds"
+              "period_seconds"
+              "timeout_seconds"
+              "success_threshold"
+              "failure_threshold"
+            ]);
+      restartWord = rs:
+        if builtins.elem rs validRestart then rs
+        else throw ''nixx.processCompose: restart must be "on_failure" | "exit_on_failure" | "always" | "no"'';
+      # source-read each block's body, then map its opts to a pc process entry
+      processes = builtins.mapAttrs
+        (n: v:
+          let
+            b = normalize v;
+            pos = builtins.unsafeGetAttrPos n procAttrs;
+            m = materializeRaw pos b;
+            command = substVars vars m.text;
+            rs = m.restart or null;
+            rd = m.readiness or null;
+            ds = m.depends_on or [ ];
+            c = m.cwd or null;
+            avail = if rs == null then null else { restart = restartWord rs; };
+          in
+          mergeAttrs [
+            { inherit command; }
+            (optionalAttr "working_dir" (if c == null then null else toString c))
+            { environment = asEnvList (env // m.env); }
+            (optionalAttr "depends_on" (if ds == [ ] then null else dependsMap ds))
+            (optionalAttr "readiness_probe" (if rd == null then null else readinessProbe rd))
+            (optionalAttr "availability" avail)
+            (optionalAttr "description" (m.description or null))
+            (optionalAttr "namespace" (m.namespace or null))
+            (optionalAttr "shutdown" (m.shutdown or null))
+          ])
+        procAttrs;
+    in
+    {
+      # disable_env_expansion: keep shell ${VAR} raw (bash expands from env).
+      # is_strict: reject unknown keys so mapping typos fail loudly at startup.
+      config = {
+        version = "0.5";
+        is_strict = true;
+        disable_env_expansion = true;
+        inherit processes;
+      };
+      inherit processes;
+      meta = map (n: { name = n; }) (attrNames procAttrs);
+    };
+
 in
 {
   inherit sh bash py uv bun ts node deno perl ruby lua mkBlock parallel
-    mkTasks mkScript mkScripts shellHook shq dedent langProfiles;
+    mkTasks mkScript mkScripts shellHook processCompose shq dedent langProfiles;
 }

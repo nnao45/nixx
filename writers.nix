@@ -357,6 +357,67 @@ rec {
   # the same idiom mkTasks uses. Global options in the first attrset apply to
   # every app. Options that a language builder doesn't accept are dropped first
   # so it won't error.
+  # processCompose — wrap lib.processCompose's pure config into a runnable
+  # `process-compose` derivation, dropping into a flake the same way mkTasks does:
+  #
+  #   let pc = (inputs.nixx.lib.writers pkgs).processCompose
+  #             { name = "dev"; packages = [ pkgs.docker ]; } { ... };
+  #   in {
+  #     packages.dev = pc.runner;        # nix run .#dev  (Ctrl+C = graceful shutdown)
+  #     devShells.default = pc.devShell;
+  #   }
+  #
+  # Each block body is source-read and becomes a process `command`. `packages` go
+  # on PATH for every process (inherited through process-compose). TUI is OFF by
+  # default (nix run / CI friendly — logs stream to stdout); set `tui = true` for
+  # the interactive multiplexer. The generated JSON is written to the store and
+  # also returned as `config`/`configJson`, so the same config can run outside Nix.
+  processCompose = opts: procDefs:
+    let
+      name = opts.name or "compose";
+      pkgList = opts.packages or [ ];
+      inputsFromList = opts.inputsFrom or [ ];
+      tui = opts.tui or false;
+      pure = nixx.processCompose
+        (lib.removeAttrs opts [ "name" "packages" "inputsFrom" "tui" ])
+        procDefs;
+      configJson = builtins.toJSON pure.config;
+      configFile = pkgs.writeText "${name}-process-compose.json" configJson;
+      tuiFlag = if tui then "--tui=true" else "--tui=false";
+      # process-compose owns process lifecycle, so the command is the user's raw
+      # bash (no set -euo pipefail prepended — a failing line shouldn't necessarily
+      # crash a supervised server; restart/availability policy handles failures).
+      runner = pkgs.writeShellApplication {
+        inherit name;
+        runtimeInputs = [ pkgs.process-compose ] ++ pkgList;
+        text = ''
+          exec process-compose \
+            --config ${configFile} \
+            up ${tuiFlag} "$@"
+        '';
+      };
+      ifBuildInputs = lib.concatMap
+        (s: (s.nativeBuildInputs or [ ]) ++ (s.buildInputs or [ ]) ++ (s.propagatedBuildInputs or [ ]))
+        inputsFromList;
+      ifShellHook = lib.concatStringsSep "\n" (map (s: s.shellHook or "") inputsFromList);
+      devShell = pkgs.mkShell {
+        packages = [ runner ] ++ pkgList;
+        inputsFrom = inputsFromList;
+      };
+      # same reasoning as mkTasks.extendShell: override the caller's shell so its
+      # own env vars + shellHook survive, then append the runner + packages.
+      extendShell = shell: shell.overrideAttrs (old: {
+        nativeBuildInputs = (old.nativeBuildInputs or [ ])
+          ++ [ runner ] ++ pkgList ++ ifBuildInputs;
+        shellHook = lib.concatStringsSep "\n"
+          (lib.filter (s: s != "") [ (old.shellHook or "") ifShellHook ]);
+      });
+    in
+    {
+      inherit runner devShell extendShell configJson configFile;
+      inherit (pure) config processes meta;
+    };
+
   mkApps = opts: apps:
     let
       common = [ "name" "vars" "packages" ];

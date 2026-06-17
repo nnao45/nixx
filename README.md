@@ -177,6 +177,38 @@ in `mkShell` — a `mkShell`-only package is absent from `nix run .#tasks`. Full
 `env`/`deps` semantics and the `writers.mkTasks` return value (`runner` /
 `devShell` / `extendShell`) in **[API.md](./API.md)**.
 
+## Process groups with process-compose
+Use `processCompose` when the workflow is several long-running processes instead
+of a dependency-ordered task list. It turns nixx bash blocks into a
+`process-compose` config with readiness gates, `depends_on`, restart policy, and
+graceful shutdown:
+
+```nix
+with inputs.nixx.lib.for pkgs;
+let
+  pc = processCompose { name = "dev"; vars = { port = 3000; }; } {
+    web = bash ''
+      echo "web on @nix(port), home=${HOME}"
+      sleep 30
+    '' { readiness = { exec = "true"; initial_delay_seconds = 2; }; };
+
+    api = bash ''
+      echo "api after web"
+      sleep 30
+    '' { depends_on = [ "web" ]; restart = "on_failure"; };
+  };
+in {
+  packages.default = pc.runner;       # nix run .#default
+}
+```
+
+Per-process options use the same `bash ''...'' { ... }` call form as tasks:
+`cwd`, `env`, `depends_on`, `readiness`, `restart`, `description`, `namespace`,
+and `shutdown`. `pc.config`, `pc.configJson`, and `pc.configFile` expose the
+generated process-compose config for inspection or reuse. Full mapping and
+return values are in **[API.md](./API.md)**; the runnable example is
+`examples/process-compose`.
+
 ## Dev shells — pick your idiom
 Same `with inputs.nixx.lib.for pkgs;`, same zero-`${}`-tax bodies; only the wiring
 differs. The zero-config path lands the runner on PATH, tab-completed:
@@ -203,4 +235,5 @@ documented in **[API.md](./API.md)**.
 - **LLM-friendly plain-text**: [nnao45.github.io/nixx/llms.txt](https://nnao45.github.io/nixx/llms.txt)
 - **Multi-language & shippable binaries**, `mkScript(s)`, `vars` markers
   (`@nix`, `@sh:q`), full language/option tables, `shellint` & `envCheck`
-  reference, and the linter source-mapping: **[API.md](./API.md)**.
+  reference, `processCompose`, and the linter source-mapping:
+  **[API.md](./API.md)**.
