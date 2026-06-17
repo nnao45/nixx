@@ -1,2 +1,4 @@
 disabled = ["unquoted_uri"]
-ignore = [".direnv"]
+# shellint test fixtures are intentionally parse-broken nixx (parse-wall ${…}
+# forms) — not real Nix, so keep statix off them.
+ignore = [".direnv", "tests/shellint-fixtures"]
