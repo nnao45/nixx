@@ -186,7 +186,11 @@ graceful shutdown:
 ```nix
 with inputs.nixx.lib.for pkgs;
 let
-  pc = processCompose { name = "dev"; vars = { port = 3000; }; } {
+  pc = processCompose {
+    name = "dev";
+    vars = { port = 3000; };
+    "no-server" = true;
+  } {
     web = bash ''
       echo "web on @nix(port), home=${HOME}"
       sleep 30
@@ -205,9 +209,10 @@ in {
 Per-process options use the same `bash ''...'' { ... }` call form as tasks:
 `cwd`, `env`, `depends_on`, `readiness`, `restart`, `description`, `namespace`,
 and `shutdown`. `pc.config`, `pc.configJson`, and `pc.configFile` expose the
-generated process-compose config for inspection or reuse. Full mapping and
-return values are in **[API.md](./API.md)**; the runnable example is
-`examples/process-compose`.
+generated process-compose config for inspection or reuse. Runner options also
+expose process-compose global flags like `"no-server"`, `"use-uds"`, and `port`.
+Full mapping and return values are in **[API.md](./API.md)**; the runnable
+example is `examples/process-compose`.
 
 ## Dev shells — pick your idiom
 Same `with inputs.nixx.lib.for pkgs;`, same zero-`${}`-tax bodies; only the wiring
