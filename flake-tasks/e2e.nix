@@ -192,11 +192,11 @@ let
         echo "PASS: both parallel tasks completed"
       '') { deps = [ "dev" ]; };
       with_dep = nixx.sh ''export PARALLEL_SETUP=1'';
-      task_c = (nixx.sh ''
+      task_c = nixx.sh ''
         test "''${PARALLEL_SETUP:-}" = "1" \
           || { echo "FAIL: dep did not run before parallel spawn"; exit 1; }
         echo "PASS: dep runs before parallel spawn"
-      '');
+      '';
       dev_with_dep = (nixx.parallel [ "task_c" ]) { deps = [ "with_dep" ]; };
       all = (nixx.sh ''
         echo "=== e2e-parallel: ALL PASSED ==="

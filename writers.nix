@@ -57,7 +57,7 @@ rec {
     '';
 
   # shellHook — pkgs-bound namespace convenience for the pure nixx.shellHook.
-  shellHook = nixx.shellHook;
+  inherit (nixx) shellHook;
 
   # runCommand — pkgs.runCommand with an escape-free bash body attrset.
   #
@@ -291,8 +291,7 @@ rec {
       # whether any task opts into blocking env-check.
       runtimeInputs = pkgList ++ [ pkgs.tree-sitter ];
       runner = pkgs.writeShellApplication {
-        inherit name;
-        runtimeInputs = runtimeInputs;
+        inherit name runtimeInputs;
         text = result.runner;
         # When env-check is enabled, bare `$VAR` / `${VAR}` references to
         # external environment variables are intentional — env-check validates
