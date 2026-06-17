@@ -340,6 +340,7 @@ let
     name = "dev";
     packages = [ pkgs.jq ];   # on PATH for every process
     vars = { port = 3000; };  # @nix() interpolation into commands
+    "no-server" = true;       # disable process-compose's HTTP API server
   } {
     web = bash ''
       echo "web on @nix(port), home=${HOME}"
@@ -366,8 +367,8 @@ in {
 
 The pkgs-bound `processCompose` returns:
 - **`runner`** — a `pkgs.writeShellApplication` derivation that runs
-  `process-compose --config <generated-json> up --tui=false "$@"`. Pass process
-  names or process-compose flags after `--`: `nix run .#dev -- web`,
+  `process-compose --config <generated-json> <global-flags> up --tui=false "$@"`.
+  Pass process names or process-compose `up` flags after `--`: `nix run .#dev -- web`,
   `nix run .#dev -- --dry-run`.
 - **`devShell`** — `pkgs.mkShell { packages = [ runner ] ++ <opts.packages>; }`.
 - **`extendShell`** — appends the runner, global packages, and `inputsFrom`
@@ -396,6 +397,9 @@ The pure `nixx.processCompose` (no pkgs) returns only `{ config, processes, meta
 | `vars` | `{}` | Nix values interpolated into process commands via `@nix(...)` / `@sh:q(...)` |
 | `env` | `{}` | attrset converted to process-compose `environment`; merged into every process, with per-process `env` winning on conflict |
 | `tui` | `false` | whether the runner passes `--tui=true`; default is log streaming for `nix run` and CI |
+| `"no-server"` | `false` | pass process-compose `--no-server`, disabling the HTTP API server |
+| `"use-uds"` | `false` | pass process-compose `--use-uds`, using a Unix domain socket instead of TCP |
+| `port` | `null` | pass process-compose `--port <n>` for the HTTP API server port; omitted when `null` |
 
 #### per-process options (attached as `bash ''body'' { ... }`)
 

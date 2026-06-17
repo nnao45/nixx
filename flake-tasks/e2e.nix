@@ -312,6 +312,34 @@ let
       touch "$out"
     '';
 
+  e2eProcessCompose =
+    let
+      nx = forPkgs pkgs;
+      pc = with nx; processCompose
+        {
+          name = "e2e-process-compose";
+          "no-server" = true;
+          "use-uds" = true;
+          port = 18080;
+        }
+        {
+          web = bash ''
+            echo "web"
+          '';
+        };
+    in
+    pkgs.runCommand "e2e-process-compose" { } ''
+      grep -q -- '--no-server' ${pc.runner}/bin/e2e-process-compose \
+        || { echo "FAIL: --no-server missing from runner"; exit 1; }
+      grep -q -- '--use-uds' ${pc.runner}/bin/e2e-process-compose \
+        || { echo "FAIL: --use-uds missing from runner"; exit 1; }
+      grep -q -- '--port 18080' ${pc.runner}/bin/e2e-process-compose \
+        || { echo "FAIL: --port missing from runner"; exit 1; }
+      ${pc.runner}/bin/e2e-process-compose --dry-run
+      echo "=== e2e-process-compose: ALL PASSED ==="
+      touch "$out"
+    '';
+
   e2eEnvCheck =
     let
       nx = forPkgs pkgs;
@@ -834,6 +862,7 @@ in
     e2e-circular = e2eCircular;
     e2e-args = e2eArgs;
     e2e-packages = e2ePackages;
+    e2e-process-compose = e2eProcessCompose;
     e2e-env-check = e2eEnvCheck;
     e2e-wrappers = e2eWrappers;
     e2e-shell-wiring = e2eShellWiring;

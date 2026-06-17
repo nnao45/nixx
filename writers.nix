@@ -370,7 +370,8 @@ rec {
   # Each block body is source-read and becomes a process `command`. `packages` go
   # on PATH for every process (inherited through process-compose). TUI is OFF by
   # default (nix run / CI friendly — logs stream to stdout); set `tui = true` for
-  # the interactive multiplexer. The generated JSON is written to the store and
+  # the interactive multiplexer. `no-server`, `use-uds`, and `port` map to
+  # process-compose global flags. The generated JSON is written to the store and
   # also returned as `config`/`configJson`, so the same config can run outside Nix.
   processCompose = opts: procDefs:
     let
@@ -378,12 +379,22 @@ rec {
       pkgList = opts.packages or [ ];
       inputsFromList = opts.inputsFrom or [ ];
       tui = opts.tui or false;
+      noServer = opts."no-server" or false;
+      useUds = opts."use-uds" or false;
+      port = opts.port or null;
       pure = nixx.processCompose
-        (lib.removeAttrs opts [ "name" "packages" "inputsFrom" "tui" ])
+        (lib.removeAttrs opts [ "name" "packages" "inputsFrom" "tui" "no-server" "use-uds" "port" ])
         procDefs;
       configJson = builtins.toJSON pure.config;
       configFile = pkgs.writeText "${name}-process-compose.json" configJson;
       tuiFlag = if tui then "--tui=true" else "--tui=false";
+      globalFlags = [
+        "--config ${configFile}"
+      ]
+      ++ lib.optional noServer "--no-server"
+      ++ lib.optional useUds "--use-uds"
+      ++ lib.optional (port != null) "--port ${toString port}";
+      globalFlagLines = lib.concatStringsSep " \\\n            " globalFlags;
       # process-compose owns process lifecycle, so the command is the user's raw
       # bash (no set -euo pipefail prepended — a failing line shouldn't necessarily
       # crash a supervised server; restart/availability policy handles failures).
@@ -392,7 +403,7 @@ rec {
         runtimeInputs = [ pkgs.process-compose ] ++ pkgList;
         text = ''
           exec process-compose \
-            --config ${configFile} \
+            ${globalFlagLines} \
             up ${tuiFlag} "$@"
         '';
       };
