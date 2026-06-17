@@ -1668,6 +1668,164 @@ let
       expected = true;
     }
 
+    # ----------------------------------------------------------------
+    # processCompose — process-compose config generation (pure)
+    # ----------------------------------------------------------------
+    {
+      name = "processCompose: config has version 0.5";
+      got = (lib.processCompose { } { p = lib.sh "echo\n"; }).config.version;
+      expected = "0.5";
+    }
+
+    {
+      name = "processCompose: disable_env_expansion is true (keeps \${VAR} raw)";
+      got = (lib.processCompose { } { p = lib.sh "echo\n"; }).config.disable_env_expansion;
+      expected = true;
+    }
+
+    {
+      name = "processCompose: is_strict is true (reject typos loudly)";
+      got = (lib.processCompose { } { p = lib.sh "echo\n"; }).config.is_strict;
+      expected = true;
+    }
+
+    {
+      name = "processCompose: processes attrset keyed by name";
+      got = builtins.attrNames (lib.processCompose { } { web = lib.sh "echo\n"; db = lib.sh "echo\n"; }).config.processes;
+      expected = [ "db" "web" ];
+    }
+
+    {
+      name = "processCompose: command from source-read body";
+      got = with { };
+        (lib.processCompose { } {
+          svc = lib.bash ''
+            echo ${HOME}
+          '';
+        }).config.processes.svc.command;
+      expected = "echo \${HOME}\n";
+    }
+
+    {
+      name = "processCompose: cwd (path) becomes working_dir string";
+      got = (lib.processCompose { } { svc = (lib.sh "echo\n") { cwd = "/srv/app"; }; }).config.processes.svc.working_dir;
+      expected = "/srv/app";
+    }
+
+    {
+      name = "processCompose: no working_dir when cwd unset";
+      got = (lib.processCompose { } { svc = lib.sh "echo\n"; }).config.processes.svc ? working_dir;
+      expected = false;
+    }
+
+    {
+      name = "processCompose: env attrset becomes K=V list";
+      got = (lib.processCompose { } { svc = (lib.sh "echo\n") { env = { PORT = "8080"; MODE = "dev"; }; }; }).config.processes.svc.environment;
+      expected = [ "MODE=dev" "PORT=8080" ];
+    }
+
+    {
+      name = "processCompose: global env merged into per-process environment";
+      got = (lib.processCompose { env = { GLOBAL = "1"; }; } { svc = (lib.sh "echo\n") { env = { LOCAL = "2"; }; }; }).config.processes.svc.environment;
+      expected = [ "GLOBAL=1" "LOCAL=2" ];
+    }
+
+    {
+      name = "processCompose: depends_on list -> { name.condition = process_healthy }";
+      got = (lib.processCompose { } { app = (lib.sh "echo\n") { depends_on = [ "db" ]; }; }).config.processes.app.depends_on;
+      expected = { db = { condition = "process_healthy"; }; };
+    }
+
+    {
+      name = "processCompose: depends_on omitted when empty";
+      got = (lib.processCompose { } { app = lib.sh "echo\n"; }).config.processes.app ? depends_on;
+      expected = false;
+    }
+
+    {
+      name = "processCompose: readiness.exec -> readiness_probe.exec.command";
+      got = (lib.processCompose { } { db = (lib.sh "echo\n") { readiness = { exec = "pg_isready"; }; }; }).config.processes.db.readiness_probe;
+      expected = { exec = { command = "pg_isready"; }; };
+    }
+
+    {
+      name = "processCompose: readiness.http -> readiness_probe.http_get";
+      got = (lib.processCompose { } { web = (lib.sh "echo\n") { readiness = { http = { port = 8080; host = "127.0.0.1"; path = "/healthz"; }; }; }; }).config.processes.web.readiness_probe;
+      expected = { http_get = { port = "8080"; host = "127.0.0.1"; path = "/healthz"; }; };
+    }
+
+    {
+      name = "processCompose: readiness timing knobs forwarded";
+      got = (lib.processCompose { } { db = (lib.sh "echo\n") { readiness = { exec = "x"; initial_delay_seconds = 3; period_seconds = 2; timeout_seconds = 1; success_threshold = 1; failure_threshold = 3; }; }; }).config.processes.db.readiness_probe;
+      expected = {
+        exec = { command = "x"; };
+        initial_delay_seconds = 3;
+        period_seconds = 2;
+        timeout_seconds = 1;
+        success_threshold = 1;
+        failure_threshold = 3;
+      };
+    }
+
+    {
+      name = "processCompose: restart -> availability.restart";
+      got = (lib.processCompose { } { db = (lib.sh "echo\n") { restart = "on_failure"; }; }).config.processes.db.availability;
+      expected = { restart = "on_failure"; };
+    }
+
+    {
+      name = "processCompose: restart=always accepted";
+      got = (lib.processCompose { } { db = (lib.sh "echo\n") { restart = "always"; }; }).config.processes.db.availability.restart;
+      expected = "always";
+    }
+
+    {
+      name = "processCompose: restart=exit_on_failure accepted";
+      got = (lib.processCompose { } { db = (lib.sh "echo\n") { restart = "exit_on_failure"; }; }).config.processes.db.availability.restart;
+      expected = "exit_on_failure";
+    }
+
+    {
+      name = "processCompose: restart=no accepted";
+      got = (lib.processCompose { } { db = (lib.sh "echo\n") { restart = "no"; }; }).config.processes.db.availability.restart;
+      expected = "no";
+    }
+
+    {
+      name = "processCompose: description forwarded";
+      got = (lib.processCompose { } { web = (lib.sh "echo\n") { description = "api server"; }; }).config.processes.web.description;
+      expected = "api server";
+    }
+
+    {
+      name = "processCompose: namespace forwarded";
+      got = (lib.processCompose { } { web = (lib.sh "echo\n") { namespace = "infra"; }; }).config.processes.web.namespace;
+      expected = "infra";
+    }
+
+    {
+      name = "processCompose: shutdown passthrough forwarded";
+      got = (lib.processCompose { } { db = (lib.sh "echo\n") { shutdown = { signal = 15; timeout_seconds = 5; }; }; }).config.processes.db.shutdown;
+      expected = { signal = 15; timeout_seconds = 5; };
+    }
+
+    {
+      name = "processCompose: @nix() vars substituted into command";
+      got = with { };
+        (lib.processCompose { vars = { port = 9000; }; } {
+          svc = lib.bash ''
+            serve --port @nix(port)
+          '';
+        }).config.processes.svc.command;
+      expected = "serve --port 9000\n";
+    }
+
+    {
+      name = "processCompose: .meta lists process names";
+      got = map (m: m.name) (lib.processCompose { } { a = lib.sh "echo\n"; b = lib.sh "echo\n"; }).meta;
+      expected = [ "a" "b" ];
+    }
+
   ];
 
   run = t: if t.got == t.expected then null else t;

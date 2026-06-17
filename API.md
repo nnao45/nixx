@@ -3,9 +3,9 @@
 The [README](./README.md) covers the headline: the two pillars (escape-light
 `${}` and `shellint`), the task runner, and one dev-shell idiom. This file is
 everything else — the multi-language builders, `mkApps`, apps+tasks composition,
-dependency wiring, the full option tables, the dev-shell wiring, `shellint` and
-`envCheck` in full, interpolation markers, the linter source-mapping, and the
-repo's own dev commands.
+`processCompose`, dependency wiring, the full option tables, the dev-shell
+wiring, `shellint` and `envCheck` in full, interpolation markers, the linter
+source-mapping, and the repo's own dev commands.
 
 ## Language constructors
 A block carries its own language as `__lang`; pick the constructor that reads
@@ -325,6 +325,99 @@ stdin via a `-` flag also receive the same args through the interpreter's
 argv (`sys.argv[1:]` in Python, `@ARGV` in Perl, `ARGV` in Ruby, `Deno.args`
 in Deno, `process.argv` in Bun). Node (`--input-type=module`) and TypeScript
 (`tsx`) do not currently receive positional args; pass data to those via `env`.
+
+## `processCompose` — supervised process groups
+Use `processCompose` when you want `process-compose` to own concurrent process
+lifecycle: readiness probes, `depends_on`, restart policy, namespaces, and
+ordered shutdown. Each nixx bash block becomes one process `command`, read from
+source just like `mkApps` / `mkTasks`, so shell `${VAR}` stays raw and `@nix(...)`
+markers still splice Nix values.
+
+```nix
+with inputs.nixx.lib.for pkgs;
+let
+  pc = processCompose {
+    name = "dev";
+    packages = [ pkgs.jq ];   # on PATH for every process
+    vars = { port = 3000; };  # @nix() interpolation into commands
+  } {
+    web = bash ''
+      echo "web on @nix(port), home=${HOME}"
+      sleep 30
+    '' {
+      readiness = { exec = "true"; initial_delay_seconds = 2; };
+      description = "frontend dev server";
+    };
+
+    api = bash ''
+      echo "api after web"
+      sleep 30
+    '' {
+      depends_on = [ "web" ];
+      env = { NODE_ENV = "development"; };
+      restart = "on_failure";
+    };
+  };
+in {
+  packages.dev = pc.runner;          # nix run .#dev
+  devShells.default = pc.devShell;   # nix develop -> `dev`
+}
+```
+
+The pkgs-bound `processCompose` returns:
+- **`runner`** — a `pkgs.writeShellApplication` derivation that runs
+  `process-compose --config <generated-json> up --tui=false "$@"`. Pass process
+  names or process-compose flags after `--`: `nix run .#dev -- web`,
+  `nix run .#dev -- --dry-run`.
+- **`devShell`** — `pkgs.mkShell { packages = [ runner ] ++ <opts.packages>; }`.
+- **`extendShell`** — appends the runner, global packages, and `inputsFrom`
+  build inputs to an existing shell while preserving that shell's `shellHook`.
+- **`config`** / **`configJson`** / **`configFile`** — the generated
+  process-compose config as an attrset, JSON string, and store path.
+- **`processes`** / **`meta`** — the generated process attrset and a small name
+  list for inspection.
+
+The pure `nixx.processCompose` (no pkgs) returns only `{ config, processes, meta
+}` and is useful for tests or for writing your own wrapper:
+
+```nix
+(inputs.nixx.lib.processCompose { vars = { port = 3000; }; } {
+  web = inputs.nixx.lib.bash ''echo @nix(port)'';
+}).config
+```
+
+#### `writers.processCompose` options
+
+| option | default | description |
+|---|---|---|
+| `name` | `"compose"` | executable name for the runner and prefix for the generated JSON file |
+| `packages` | `[]` | packages whose `/bin` join `PATH` for every process through the runner, and also appear in `devShell` / `extendShell` |
+| `inputsFrom` | `[]` | other derivations whose build inputs and setup hooks should be available in the dev shell helpers |
+| `vars` | `{}` | Nix values interpolated into process commands via `@nix(...)` / `@sh:q(...)` |
+| `env` | `{}` | attrset converted to process-compose `environment`; merged into every process, with per-process `env` winning on conflict |
+| `tui` | `false` | whether the runner passes `--tui=true`; default is log streaming for `nix run` and CI |
+
+#### per-process options (attached as `bash ''body'' { ... }`)
+
+| option | default | process-compose field | description |
+|---|---|---|---|
+| `cwd` | `null` | `working_dir` | working directory string/path for the process |
+| `env` | `{}` | `environment` | attrset converted to `[ "K=V" ... ]`, merged over global `env` |
+| `depends_on` | `[]` | `depends_on.<name>.condition = "process_healthy"` | wait for named processes to become healthy before starting this process |
+| `readiness.exec` | `null` | `readiness_probe.exec.command` | command probe shorthand |
+| `readiness.http` | `null` | `readiness_probe.http_get` | HTTP probe shorthand; requires `port`, optional `host`, `path`, `scheme` |
+| readiness timing | `null` | same keys | forwards `initial_delay_seconds`, `period_seconds`, `timeout_seconds`, `success_threshold`, `failure_threshold` |
+| `restart` | `null` | `availability.restart` | one of `"on_failure"`, `"exit_on_failure"`, `"always"`, `"no"` |
+| `description` | `null` | `description` | description shown by process-compose |
+| `namespace` | `null` | `namespace` | namespace used by process-compose filtering/UI |
+| `shutdown` | `null` | `shutdown` | attrset passed through for process-compose shutdown settings |
+
+Generated configs set `version = "0.5"`, `is_strict = true`, and
+`disable_env_expansion = true`. The last one is important: process-compose does
+not env-substitute command strings, so shell `${VAR}` reaches bash and expands
+from the process environment, matching the rest of nixx's source-read model.
+
+Runnable example: `examples/process-compose`.
 
 ## `envCheck` — runtime env-check (the `mkTasks` sibling of `shellint`)
 `envCheck` is a `mkTasks` option that, **before a task body runs**, parses it with
