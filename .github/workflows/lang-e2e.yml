@@ -9,13 +9,14 @@ on:
 jobs:
   # Sandbox-safe runtimes: build + run inside pkgs.runCommand, verified via
   # `nix flake check`.  No network needed; all deps come from the Nix store.
-  #   tsx  — TypeScript / tsx  (nixx-hello nodeModules)
-  #   node — Node.js           (nixx-hello NODE_PATH)
-  #   perl — Perl              (JSON::PP core module)
-  #   ruby — Ruby              (json stdlib)
-  #   lua  — Lua               (built-in table/string/io)
+  #   tsx     — TypeScript / tsx  (nixx-hello nodeModules)
+  #   node    — Node.js           (nixx-hello NODE_PATH)
+  #   perl    — Perl              (JSON::PP core module)
+  #   ruby    — Ruby              (json stdlib)
+  #   lua     — Lua               (built-in table/string/io)
+  #   moonbit — MoonBit           (native binary, stdlib built-in)
   sandbox-safe:
-    name: "lang-e2e / sandbox-safe (tsx · node · perl · ruby · lua)"
+    name: "lang-e2e / sandbox-safe (tsx · node · perl · ruby · lua · moonbit)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,3 +53,19 @@ jobs:
         run: nix build ./examples/multi-lang-e2e#bun-demo --option sandbox false
       - name: run bun-demo  (standalone compiled binary, no network needed)
         run: ./result/bin/bun-demo
+
+  # moonbit: `moon build --target native` compiles to a self-contained native
+  # binary at build time.  No network access needed; fully sandbox-safe.
+  # Verified separately so a pkgs.moonbit availability issue doesn't block the
+  # other sandbox-safe runtimes.
+  moonbit:
+    name: "lang-e2e / moonbit (native binary)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeterminateSystems/nix-installer-action@v14
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
+      - name: build moonbit-demo  (moon build --target native)
+        run: nix build ./examples/multi-lang-e2e#moonbit-demo
+      - name: run moonbit-demo  (standalone native binary)
+        run: ./result/bin/moonbit-demo

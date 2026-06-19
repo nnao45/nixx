@@ -167,6 +167,17 @@
             table.sort(parts)
             io.write("        {" .. table.concat(parts, ", ") .. "}\n")
           '';
+
+          # ── 9. MoonBit ────────────────────────────────────────────────────
+          # Compiled to a native binary via `moon build --target native`.
+          # No external deps: standard library built-in. Fully sandbox-safe.
+          moonbit-demo = moonbit ''
+            fn main {
+              let runtime = "moonbit"
+              let dep = "stdlib (built-in)"
+              println("✓ \{runtime}  dep: \{dep}  status: PASS")
+            }
+          '';
         };
 
         e2eAll = pkgs.writeShellApplication {
@@ -200,6 +211,9 @@
             echo "── 8. lua  (built-in table/string/io) ──────────────────────"
             ${appPkgs.lua-demo}/bin/lua-demo
             echo ""
+            echo "── 9. moonbit  (native binary, stdlib built-in) ────────────"
+            ${appPkgs.moonbit-demo}/bin/moonbit-demo
+            echo ""
             echo "╔══════════════════════════════════════════════════════════╗"
             echo "║  ALL RUNTIMES PASSED ★                                   ║"
             echo "╚══════════════════════════════════════════════════════════╝"
@@ -229,17 +243,19 @@
 
         # Sandbox-safe checks — run by `nix flake check` and the lang-e2e CI job.
         # Each check builds the app derivation AND executes it, verifying "PASS"
-        # appears in the output.  No network is required for these five.
+        # appears in the output.  No network is required for these runtimes.
         #
-        # uv-demo:   build only (ruff-gated); runtime calls `uv run` → needs network
-        # bun-demo:  excluded; `bun install` at build time needs network
-        # deno-demo: build only (copies .ts); runtime fetches jsr: → needs network
+        # uv-demo:      build only (ruff-gated); runtime calls `uv run` → needs network
+        # bun-demo:     excluded; `bun install` at build time needs network
+        # deno-demo:    build only (copies .ts); runtime fetches jsr: → needs network
+        # moonbit-demo: native binary compiled at build time; fully sandbox-safe
         checks = {
           tsx = mkCheck "tsx" "${appPkgs.tsx-demo}/bin/tsx-demo";
           node = mkCheck "node" "${appPkgs.node-demo}/bin/node-demo";
           perl = mkCheck "perl" "${appPkgs.perl-demo}/bin/perl-demo";
           ruby = mkCheck "ruby" "${appPkgs.ruby-demo}/bin/ruby-demo";
           lua = mkCheck "lua" "${appPkgs.lua-demo}/bin/lua-demo";
+          moonbit = mkCheck "moonbit" "${appPkgs.moonbit-demo}/bin/moonbit-demo";
           # build-only checks for network-dependent runtimes
           uv-build = appPkgs.uv-demo;
           deno-build = appPkgs.deno-demo;
@@ -254,20 +270,22 @@
             pkgs.perl
             pkgs.ruby
             pkgs.lua
+            pkgs.moonbit
           ];
           shellHook = shellHook {
             hook = bash ''
               echo "nixx multi-lang e2e"
               echo ""
-              echo "  nix run .#default       run all 8 runtimes end-to-end"
-              echo "  nix run .#uv-demo       python + rich  (runtime: uv run)"
-              echo "  nix run .#bun-demo      typescript + chalk  (compiled binary)"
-              echo "  nix run .#tsx-demo      typescript + nixx-hello  (tsx + nodeModules)"
-              echo "  nix run .#node-demo     node.js + nixx-hello  (NODE_PATH)"
-              echo "  nix run .#deno-demo     deno + jsr:@std/fmt  (runtime: deno run)"
-              echo "  nix run .#perl-demo     perl + JSON::PP  (core module)"
-              echo "  nix run .#ruby-demo     ruby + json  (stdlib)"
-              echo "  nix run .#lua-demo      lua + built-in table/string"
+              echo "  nix run .#default           run all 9 runtimes end-to-end"
+              echo "  nix run .#uv-demo           python + rich  (runtime: uv run)"
+              echo "  nix run .#bun-demo          typescript + chalk  (compiled binary)"
+              echo "  nix run .#tsx-demo          typescript + nixx-hello  (tsx + nodeModules)"
+              echo "  nix run .#node-demo         node.js + nixx-hello  (NODE_PATH)"
+              echo "  nix run .#deno-demo         deno + jsr:@std/fmt  (runtime: deno run)"
+              echo "  nix run .#perl-demo         perl + JSON::PP  (core module)"
+              echo "  nix run .#ruby-demo         ruby + json  (stdlib)"
+              echo "  nix run .#lua-demo          lua + built-in table/string"
+              echo "  nix run .#moonbit-demo      moonbit + stdlib  (native binary)"
               echo ""
               echo "  NOTE: bun-demo needs network at build time (bun install)."
               echo "        Linux: nix run .#bun-demo --option sandbox false"
