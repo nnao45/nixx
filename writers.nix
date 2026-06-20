@@ -927,17 +927,24 @@ rec {
     , block
     , vars ? { }
     , packages ? [ ]
+    , moon ? pkgs.moonbit or null  # pass your own if pkgs.moonbit is unavailable
     }:
     let
+      _moon =
+        if moon != null then moon
+        else throw ''
+          nixx.writeMoonBitApplication: moonbit is not available in pkgs (pkgs.moonbit is missing).
+          Supply moon = <your-moon-derivation> or add a moonbit overlay to your nixpkgs.
+        '';
       script = nixx.mkScript { lang = "moonbit"; inherit vars; shebang = "// moonbit"; } block;
-      binPath = lib.makeBinPath ([ pkgs.moonbit ] ++ packages);
+      binPath = lib.makeBinPath ([ _moon ] ++ packages);
     in
     stdenv.mkDerivation {
       inherit name;
       dontUnpack = true;
       passAsFile = [ "script" ];
       inherit script;
-      nativeBuildInputs = [ pkgs.moonbit pkgs.makeWrapper ];
+      nativeBuildInputs = [ _moon pkgs.makeWrapper ];
       buildPhase = ''
         runHook preBuild
         mkdir -p src/main
