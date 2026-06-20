@@ -454,9 +454,11 @@ rec {
           writeRubyApplication ((pickFrom appOpts (common ++ [ "rubyGems" ])) // { inherit block; })
         else if lang == "lua" then
           writeLuaApplication ((pickFrom appOpts (common ++ [ "luaPackages" ])) // { inherit block; })
+        else if lang == "moonbit" then
+          writeMoonBitApplication ((pickFrom appOpts common) // { inherit block; })
         else
           throw ("nixx.mkApps: no builder for lang '" + lang + "' "
-            + "(have: bash, python-uv, bun, node, typescript, deno, perl, ruby, lua)");
+            + "(have: bash, python-uv, bun, node, typescript, deno, perl, ruby, lua, moonbit)");
       result = nixx.mkTasks { vars = opts.vars or { }; } apps;
       globalOpts = lib.removeAttrs opts [ "name" "vars" ];
     in
@@ -900,6 +902,65 @@ rec {
         exec ${luaInterp}/bin/lua "$out/share/${name}/main.lua" "\$@"
         LAUNCH
         chmod +x "$out/bin/${name}"
+        wrapProgram "$out/bin/${name}" --prefix PATH : ${binPath}
+        runHook postInstall
+      '';
+      meta.mainProgram = name;
+    };
+
+  # writeMoonBitApplication — MoonBit compiled to a native binary via moon.
+  # MoonBit is a compiled language: the block body is placed into a minimal
+  # project structure, built with `moon build --target native --release`, and the
+  # resulting binary is installed. No inline dep mechanism (like uv or bun);
+  # supply extra tools via `packages`.
+  #
+  #   writeMoonBitApplication {
+  #     name = "tool";
+  #     block = nixx.moonbit ''
+  #       fn main {
+  #         println("Hello from MoonBit!")
+  #       }
+  #     '';
+  #   }
+  writeMoonBitApplication =
+    { name
+    , block
+    , vars ? { }
+    , packages ? [ ]
+    , moon ? pkgs.moonbit or null  # pass your own if pkgs.moonbit is unavailable
+    }:
+    let
+      _moon =
+        if moon != null then moon
+        else throw ''
+          nixx.writeMoonBitApplication: moonbit is not available in pkgs (pkgs.moonbit is missing).
+          Supply moon = <your-moon-derivation> or add a moonbit overlay to your nixpkgs.
+        '';
+      script = nixx.mkScript { lang = "moonbit"; inherit vars; shebang = "// moonbit"; } block;
+      binPath = lib.makeBinPath ([ _moon ] ++ packages);
+    in
+    stdenv.mkDerivation {
+      inherit name;
+      dontUnpack = true;
+      passAsFile = [ "script" ];
+      inherit script;
+      nativeBuildInputs = [ _moon pkgs.makeWrapper ];
+      buildPhase = ''
+        runHook preBuild
+        mkdir -p src/main
+        # strip the "// moonbit" marker line; keep the MoonBit source body
+        tail -n +2 "$scriptPath" > src/main/main.mbt
+        printf '{"name":"%s","version":"0.1.0","source":"src"}\n' "${name}" > moon.mod.json
+        printf '{"is-main":true}\n' > src/main/moon.pkg.json
+        moon build --target native --release
+        runHook postBuild
+      '';
+      installPhase = ''
+        runHook preInstall
+        mkdir -p "$out/bin"
+        # locate the native binary moon produced (path varies by moon version)
+        _bin=$(find target/native/release -maxdepth 5 -type f -perm /111 | head -1)
+        install -Dm755 "$_bin" "$out/bin/${name}"
         wrapProgram "$out/bin/${name}" --prefix PATH : ${binPath}
         runHook postInstall
       '';

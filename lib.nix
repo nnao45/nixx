@@ -301,6 +301,7 @@ let
   perl = mkBlock "perl"; # perl ($VAR / ${VAR} survive source-read like bash)
   ruby = mkBlock "ruby";
   lua = mkBlock "lua";
+  moonbit = mkBlock "moonbit"; # moonbit (compiled + run via moon)
 
   # parallel: declare that a set of named tasks should run concurrently.
   # The listed tasks are spawned as background subshells; the parallel task
@@ -400,6 +401,25 @@ let
         else if lang == "perl" then viaArgs "perl -"
         else if lang == "ruby" then viaArgs "ruby -"
         else if lang == "lua" then viaArgs "lua -"
+        else if lang == "moonbit" then
+          # moonbit is compiled: write a minimal project to a temp dir and run via moon.
+          let
+            eot    = "NIXX_EOT_${name}";
+            modEot = "NIXX_MOD_${name}";
+            pkgEot = "NIXX_PKG_${name}";
+          in
+          "  _nixx_moon_tmp=$(mktemp -d)\n"
+          + "  trap 'rm -rf \"$_nixx_moon_tmp\"' RETURN\n"
+          + "  mkdir -p \"$_nixx_moon_tmp/src/main\"\n"
+          + "  cat > \"$_nixx_moon_tmp/moon.mod.json\" <<'${modEot}'\n"
+          + "{\"name\":\"nixx-task\",\"version\":\"0.1.0\",\"source\":\"src\"}\n"
+          + "${modEot}\n"
+          + "  cat > \"$_nixx_moon_tmp/src/main/moon.pkg.json\" <<'${pkgEot}'\n"
+          + "{\"is-main\":true}\n"
+          + "${pkgEot}\n"
+          + "  cat > \"$_nixx_moon_tmp/src/main/main.mbt\" <<'${eot}'\n"
+          + raw + "\n${eot}\n"
+          + "  ( cd \"$_nixx_moon_tmp\" && moon run src/main -- \"$@\" )\n"
         else via "cat"; # unknown: just echo it (safe fallback)
       fnFor = n:
         let
@@ -682,6 +702,9 @@ let
     # literals — interfaces/generics/annotations are written 100% raw.
     bun = { shebang = "#!/usr/bin/env bun"; strict = false; pathStyle = "none"; };
     typescript = { shebang = "#!/usr/bin/env tsx"; strict = false; pathStyle = "none"; };
+    # moonbit is compiled, not interpreted: the shebang is a marker stripped by
+    # writeMoonBitApplication (tail -n +2). MoonBit comments use //, so // works.
+    moonbit = { shebang = "// moonbit"; strict = false; pathStyle = "none"; };
   };
 
   # PEP 723 inline metadata block for uv. requirements is a list of strings like
@@ -931,6 +954,6 @@ let
 
 in
 {
-  inherit sh bash py uv bun ts node deno perl ruby lua mkBlock parallel
+  inherit sh bash py uv bun ts node deno perl ruby lua moonbit mkBlock parallel
     mkTasks mkScript mkScripts shellHook processCompose shq dedent langProfiles;
 }
