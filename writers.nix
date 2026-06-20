@@ -910,7 +910,7 @@ rec {
 
   # writeMoonBitApplication — MoonBit compiled to a native binary via moon.
   # MoonBit is a compiled language: the block body is placed into a minimal
-  # project structure, built with `moon build --target native`, and the
+  # project structure, built with `moon build --target native --release`, and the
   # resulting binary is installed. No inline dep mechanism (like uv or bun);
   # supply extra tools via `packages`.
   #
@@ -952,7 +952,7 @@ rec {
         tail -n +2 "$scriptPath" > src/main/main.mbt
         printf '{"name":"%s","version":"0.1.0","source":"src"}\n' "${name}" > moon.mod.json
         printf '{"is-main":true}\n' > src/main/moon.pkg.json
-        moon build --target native
+        moon build --target native --release
         runHook postBuild
       '';
       installPhase = ''
