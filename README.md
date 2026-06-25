@@ -41,8 +41,9 @@ inputs.nixx.url = "github:nnao45/nixx";
 ```
 
 > Also speaks python (uv), typescript (bun/tsx), node, deno, perl, ruby, lua —
-> and bundles dev workflows with `mkTasks`. Full reference, dependency wiring,
-> and every option table in **[API.md](./API.md)**.
+> bundles dev workflows with `mkTasks`, and runs those same bodies as **hermetic
+> sandbox tests** with `mkTests` (below). Full reference, dependency wiring, and
+> every option table in **[API.md](./API.md)**.
 
 ## Pillar 1 — `${}` belongs to the language
 Every body passed as an attr value to `mkApps`, `mkTasks`, or `mkScripts` is read
@@ -176,6 +177,82 @@ $ tasks build      # or: nix run .#tasks -- build
 in `mkShell` — a `mkShell`-only package is absent from `nix run .#tasks`. Full
 `env`/`deps` semantics and the `writers.mkTasks` return value (`runner` /
 `devShell` / `extendShell`) in **[API.md](./API.md)**.
+
+## Hermetic tests — `mkTests`
+`mkTests` runs each test in the **Nix build sandbox**: no `$HOME`, no network, and
+PATH limited to the suite's declared `packages`. A green run isn't "passed on my
+machine" — it's "passed with *only* what was declared, offline, against a freshly
+minted `$HOME`." A hidden `curl`, a stray `~/.aws/credentials` read, or an
+undeclared `jq` can't sneak a pass: the sandbox withholds them and the test fails
+the instant it reaches for one. That guarantee is what a host-resident runner like
+bats can't give you.
+
+Bodies are the usual source-read `bash ''…''` (escape-light, shellcheck'd), with a
+**bats-compatible** vocabulary so existing muscle memory transfers — over a
+per-test writable `$WORK` the harness mints and tears down:
+
+```nix
+with inputs.nixx.lib.for pkgs;
+{
+  # one mkTests call = one suite = one named check
+  checks.${system}.tools = mkTests { name = "tools"; packages = [ pkgs.jq ]; } {
+    setup = bash ''mkdir -p "$WORK/out"'';            # lifecycle hook, not a test
+
+    "jq extracts fields" = bash ''
+      run jq -n '{ port: 8080 }'                      # run captures $status/$output
+      assert_success
+      assert_json '.port' '8080'
+    '';
+
+    "writes into the per-test $WORK" = bash ''
+      printf 'ok' > "$WORK/out/marker"
+      assert_file "$WORK/out/marker"
+      assert_file_contains "$WORK/out/marker" ok
+    '';
+  };
+}
+```
+
+`run` captures `$status` / `$output` / `$stderr` (bats style); `assert_success`,
+`assert_failure`, `assert_output [--partial|--regexp]`, `refute_output`, and
+`assert_equal` are joined by nixx extras `assert_file`, `assert_dir`,
+`assert_file_contains`, and `assert_json`. `setup` / `teardown` / `setup_suite` /
+`teardown_suite` are lifecycle hooks. The code under test is reached by name if
+it's a nixx app, or via `src = ./.;` (mounted read-only as `$FIXTURES`).
+
+**Two lanes from one definition:**
+
+| lane | how | when |
+|---|---|---|
+| **hermetic** | the returned derivation → `checks.<system>`; `nix flake check` builds it in the sandbox | CI, pre-commit — the source of truth |
+| **fast** | `.fast` — a devShell-lane runnable, no sandbox, instant | the carve-carve TDD loop |
+
+**`nixx test`** discovers `*_test.nix` and drives both lanes:
+
+```sh
+nixx test                     # fast lane: every *_test.nix under .
+nixx test -f deploy           # only tests whose name contains "deploy"
+nixx test --hermetic          # run each suite in the sandbox
+nix flake check               # the hermetic suites, as checks
+```
+
+When a hermetic test goes red, **`--repro`** drops you into that test's *exact*
+environment — same `$WORK`, same PATH, `setup` already run, every `run`/`assert_*`
+helper loaded — as an interactive shell; type `t` to re-run the body and watch the
+assertion fail live:
+
+```sh
+nixx test path/to/x_test.nix --repro "jq extracts fields"
+#   cwd is $WORK (writable) · helpers loaded · `t` runs the body · Ctrl-D leaves
+```
+
+`--once` reads stdin one-shot instead of opening a prompt, so the repro path is
+scriptable and CI-able.
+
+> **Eating its own shell.** The assert runtime and `nixx test` CLI are written as
+> source-read `bash ''…''` inside nixx itself — no external `.sh`. Runnable suites
+> live in `tests/*_test.nix`; the full option/assert reference is in
+> **[API.md](./API.md)**.
 
 ## Process groups with process-compose
 Use `processCompose` when the workflow is several long-running processes instead

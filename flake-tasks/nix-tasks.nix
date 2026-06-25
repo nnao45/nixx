@@ -48,13 +48,16 @@ let
       done
       exit $rc
     '';
+    sh-lint = (nixx.sh ''
+      shellcheck shellint.sh
+    '') { description = "shellcheck shellint.sh (the one non-inlinable engine)"; };
     check = (nixx.sh ''
       echo "all nix checks passed"
-    '') { description = "fmt-check + lint + lint-nixf"; deps = [ "fmt-check" "lint" "lint-nixf" ]; };
+    '') { description = "fmt-check + lint + lint-nixf + sh-lint"; deps = [ "fmt-check" "lint" "lint-nixf" "sh-lint" ]; };
   })) runner;
 in
 pkgs.writeShellApplication {
   name = "nix-tasks";
-  runtimeInputs = [ pkgs.nixpkgs-fmt pkgs.statix pkgs.nixf pkgs.jq ];
+  runtimeInputs = [ pkgs.nixpkgs-fmt pkgs.statix pkgs.nixf pkgs.jq pkgs.shellcheck ];
   text = runner;
 }
