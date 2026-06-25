@@ -326,6 +326,134 @@ argv (`sys.argv[1:]` in Python, `@ARGV` in Perl, `ARGV` in Ruby, `Deno.args`
 in Deno, `process.argv` in Bun). Node (`--input-type=module`) and TypeScript
 (`tsx`) do not currently receive positional args; pass data to those via `env`.
 
+## `mkTests` — hermetic shell tests
+`writers.mkTests` turns a set of `bash ''…''` blocks into a **test suite that runs
+in the Nix build sandbox**: no `$HOME`, no network, and `PATH` limited to the
+suite's declared `packages` (plus the harness's own `bash`/`coreutils`/`gnugrep`/
+`jq`). The returned value *is* the hermetic derivation, so it drops straight into
+`checks.<system>` and `nix flake check` runs it; build success ⇔ all tests pass.
+
+```nix
+with inputs.nixx.lib.for pkgs;
+let
+  suite = mkTests { name = "deploy"; packages = [ pkgs.jq ]; src = ./.; } {
+    setup_suite = bash ''echo "one-time, before any test"'';
+    setup       = bash ''mkdir -p "$WORK/out"'';   # before EACH test, fresh $WORK
+    teardown    = bash '': "tidy up after each"'';
+
+    "renders into the per-test $WORK" = bash ''
+      run "$FIXTURES/render.sh" "$WORK/out"          # code under test, via src
+      assert_success
+      assert_file           "$WORK/out/index.html"
+      assert_file_contains  "$WORK/out/index.html" "<title>"
+    '';
+
+    "config is valid json" = bash ''
+      run jq -n '{ port: 8080 }'
+      assert_json '.port' '8080'
+    '';
+  };
+in {
+  checks.${system}.deploy = suite;          # hermetic — nix flake check builds it
+  packages.deploy-test    = suite.fast;     # fast lane — ./result/bin/deploy-test
+}
+```
+
+`mkTests { opts } { tests }` returns the **hermetic derivation** with passthru:
+- **`.fast`** — a `writeShellScriptBin` runnable that executes the same suite with
+  **no sandbox** and a `mktemp` `$WORK` (the TDD lane). The declared `packages`
+  are put on `PATH` ahead of the inherited environment.
+- **`.suite`** — the generated suite script (assert runtime + glue), for inspection.
+
+#### `writers.mkTests` options
+
+| option | default | description |
+|---|---|---|
+| `name` | `"tests"` | suite name; the hermetic derivation's name and the `.fast` binary's name (`<name>-test`) |
+| `packages` | `[]` | `/bin` on `PATH` for every test, in **both** lanes — the hermetic lane via the sandbox's `nativeBuildInputs`, the fast lane via a `PATH` prefix. A command absent here is unresolved in the sandbox (that's the point) |
+| `src` | `null` | a path mounted read-only into the run and exposed as `$FIXTURES` — the code/data under test |
+| `vars` | `{}` | Nix values interpolated into bodies via `@nix(…)` / `@sh:q(…)` markers (same as `mkTasks`) |
+
+#### lifecycle keys (not tests)
+
+`setup` / `teardown` run before/after **each** test; `setup_suite` / `teardown_suite`
+run once around the whole suite. They are written as ordinary bash blocks under
+those reserved attr names.
+
+#### the test environment
+
+| name | what |
+|---|---|
+| `$WORK` | a fresh, writable scratch dir minted before each test and removed after; the test's cwd. The store is read-only, so all writes go here |
+| `$FIXTURES` | the `src` tree (read-only) when `src` is set |
+
+#### assert vocabulary
+
+bats-compatible, so existing tests port with little change:
+
+| helper | passes when |
+|---|---|
+| `run cmd …` | always — captures `$status`, `$output`, `$stderr`, and `$lines` (never aborts the test, even on non-zero) |
+| `assert_success` | `$status` is 0 |
+| `assert_failure [code]` | `$status` is non-zero (and equals `code` if given) |
+| `assert_output [--partial\|--regexp] <s>` | `$output` equals / contains / matches `s` |
+| `refute_output [<s>]` | `$output` is empty (no arg) / does not contain `s` |
+| `assert_equal <a> <b>` | `a` == `b` |
+| `assert_file <p>` / `assert_dir <p>` | path exists and is a file / dir |
+| `assert_file_contains <p> <s>` | file `p` contains substring `s` |
+| `assert_json <jq-filter> <expected>` | `jq <filter>` over `$output` equals `expected` (both compared as canonical JSON) |
+
+A test fails when any command in its body returns non-zero (the body runs under
+`set -e` in a subshell), so a bare `test -f x` fails the test just like a failed
+assert. Failure diagnostics carry the `file:line` of the body and an
+expected/actual diff.
+
+### `nixx test` — discovery CLI
+`writers.nixxTest` (exposed as `nixx test` once wired into your apps) sweeps a tree
+for `*_test.nix` and runs each suite. A `*_test.nix` evaluates to a `mkTests`
+result; the CLI is a thin driver over `nix-build`.
+
+```sh
+nixx test                     # fast lane: every *_test.nix under .
+nixx test path/ -f deploy     # only tests whose display name contains "deploy"
+nixx test --hermetic          # build each suite in the sandbox instead
+nixx test x_test.nix --tap    # TAP output (default is coloured pretty)
+nixx test --list              # just print the discovered suites
+```
+
+| flag | effect |
+|---|---|
+| `-f`, `--filter <s>` | run only tests whose display name contains `s` (sets `NIXX_FILTER`) |
+| `--hermetic` | build each suite's sandbox derivation rather than its `.fast` lane |
+| `-t`, `--tap` | emit TAP instead of the pretty reporter |
+| `-l`, `--list` | list the discovered `*_test.nix` and exit |
+| `-r`, `--repro <name>` | drop into the matching test's environment (see below) |
+| `--once` | with `--repro`, evaluate stdin one-shot instead of opening a prompt |
+
+### `--repro` — step into a failing test
+`nixx test … --repro "<name>"` builds the fast lane, runs the suite's `setup`, mints
+`$WORK`, exports every `run`/`assert_*` helper and the matching test's body, then
+hands control to an **interactive shell sitting in that exact environment**. Type
+`t` to run the body (under `set -e`, so its exit status is the verdict) and watch
+the assertions print live; or call `run`/`assert_*` by hand to probe. A name that
+no suite contains exits 3 and lists what *is* available.
+
+`--once` swaps the interactive shell for a one-shot `exec bash` that reads stdin to
+EOF — so the repro is scriptable:
+
+```sh
+printf 't\n' | nixx test x_test.nix --repro "config is valid json" --once
+#   exit 0 if the test passes, non-zero (with diagnostics) if it fails
+```
+
+Reporting/lane env knobs (set by the CLI, usable directly): `NIXX_TAP=1`,
+`NIXX_FILTER=<s>`, `NIXX_REPRO=<name>`, `NIXX_REPRO_ONCE=1`, plus `NO_COLOR`.
+
+> The assert runtime and the `nixx test` CLI are themselves source-read
+> `bash ''…''` blocks inside `writers.nix` — nixx runs on its own shell. The one
+> engine kept as a real `.sh` is `shellint.sh`: a linter that manipulates `''` and
+> `${…}` as data, which source-read's de-escaper would mangle.
+
 ## `processCompose` — supervised process groups
 Use `processCompose` when you want `process-compose` to own concurrent process
 lifecycle: readiness probes, `depends_on`, restart policy, namespaces, and
