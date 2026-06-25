@@ -18,6 +18,18 @@ let
     exclude = [ "*/result/*" "*/shellint-fixtures/*" ];
     passes = { shellcheck = false; envcheck = false; };
   };
+
+  # shellint.sh is the one engine that CAN'T be an inline `bash ''…''` block: it
+  # manipulates `''` and `${…}` as data (it's the linter), so source-read's
+  # scanBody would mangle it. It stays a real .sh file — gate it on shellcheck
+  # here so it's still managed by `nix flake check`. (The test runtime + CLI ARE
+  # inlined into writers.nix and get the embedded-block coverage instead.)
+  engineShellcheck = pkgs.runCommandLocal "engine-shellcheck"
+    { nativeBuildInputs = [ pkgs.shellcheck ]; } ''
+    shellcheck ${../shellint.sh}
+    echo "engine-shellcheck: PASSED"
+    touch "$out"
+  '';
 in
 rec {
   packages = {
@@ -50,5 +62,6 @@ rec {
     lib-tests = libTests;
     inherit (packages) nix-tasks;
     shellint = shellintCheck;
+    engine-shellcheck = engineShellcheck;
   };
 }

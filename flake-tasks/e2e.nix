@@ -849,6 +849,101 @@ let
       echo "=== e2e-shellint-fix: ALL PASSED ==="
       touch "$out"
     '';
+  # mkTests (Pillar 3) — the hermetic shell-test runner + `nixx test --repro`.
+  # We drive the FAST lane bin (built at eval time, referenced by store path) so
+  # the sandbox never needs nested nix. The green suite's HERMETIC derivation is
+  # an input: if it didn't build-and-pass, this e2e can't even start.
+  e2eMkTests =
+    let
+      nx = forPkgs pkgs;
+      # all-green → its sandbox build must succeed (proves the hermetic lane).
+      green = with nx; mkTests { name = "e2e-mktests-green"; packages = [ pkgs.coreutils ]; } {
+        setup = bash ''mkdir -p "$WORK/d"'';
+        "work dir is writable" = bash ''
+          echo hi > "$WORK/d/f"
+          assert_file "$WORK/d/f"
+          assert_file_contains "$WORK/d/f" hi
+        '';
+        "run captures status and output" = bash ''
+          run printf 'hello'
+          assert_success
+          assert_output hello
+        '';
+        "assert_json structural compare" = bash ''
+          run jq -n '{n:1}'
+          assert_json '.n' '1'
+        '';
+        "sandbox mints HOME, real /home is invisible" = bash ''
+          test ! -e /home || { echo "LEAK: /home visible in sandbox"; false; }
+        '';
+      };
+      # mixed (one pass, one fail) → drives the fast lane for repro/--once.
+      mixed = with nx; mkTests { name = "e2e-mktests-mixed"; packages = [ pkgs.coreutils ]; } {
+        "green case" = bash ''
+          run printf 'ok'
+          assert_output ok
+        '';
+        "red case" = bash ''
+          run printf 'actual'
+          assert_output --partial 'EXPECTED'
+        '';
+      };
+      B = "${mixed.fast}/bin/e2e-mktests-mixed-test";
+    in
+    pkgs.runCommand "e2e-mktests" { inherit green; } ''
+      set -uo pipefail
+      pass() { echo "PASS [$1]"; }
+      die() { echo "FAIL [$1]: $2" >&2; exit 1; }
+
+      # 0. the green suite's hermetic build is an input ⇒ already passed in-sandbox
+      test -e "$green" || die green-hermetic "green suite did not build"
+      pass green-hermetic-passed
+
+      # 1. fast lane full run: the red test fails ⇒ nonzero, names + summary shown
+      rc=0; o="$(${B} 2>&1)" || rc=$?
+      test "$rc" -ne 0 || die fast-red "expected nonzero when a test fails"
+      printf '%s' "$o" | grep -q 'green case' || die fast-names "green case not listed"
+      printf '%s' "$o" | grep -q '1 failed'   || die fast-summary "missing failed summary"
+      pass fast-detects-failure
+
+      # 2. NIXX_FILTER to the green test only ⇒ exit 0
+      rc=0; NIXX_FILTER='green case' ${B} >/dev/null 2>&1 || rc=$?
+      test "$rc" -eq 0 || die fast-filter "filtered green run should pass (got $rc)"
+      pass fast-filter-green
+
+      # 3. repro --once on the FAILING test, feed `t` ⇒ nonzero + live diagnostic
+      rc=0
+      o="$(printf 't\n' | NIXX_REPRO='red case' NIXX_REPRO_ONCE=1 ${B} 2>&1)" || rc=$?
+      test "$rc" -ne 0 || die repro-red "t on a failing test should exit nonzero"
+      printf '%s' "$o" | grep -q 'EXPECTED' || die repro-diag "assert diagnostic missing"
+      pass repro-once-failing
+
+      # 4. repro --once on the PASSING test, feed `t` ⇒ exit 0
+      rc=0
+      printf 't\n' | NIXX_REPRO='green case' NIXX_REPRO_ONCE=1 ${B} >/dev/null 2>&1 || rc=$?
+      test "$rc" -eq 0 || die repro-green "t on a passing test should exit 0 (got $rc)"
+      pass repro-once-passing
+
+      # 5. repro --once custom probe: cwd is a writable $WORK, helpers are loaded
+      rc=0
+      o="$(printf 'echo "CWD=$PWD"; run printf hi; assert_output hi && echo PROBE_OK\n' \
+              | NIXX_REPRO='green case' NIXX_REPRO_ONCE=1 ${B} 2>&1)" || rc=$?
+      test "$rc" -eq 0 || die repro-probe "probe should pass (got $rc)"
+      printf '%s' "$o" | grep -q 'PROBE_OK' || die repro-probe-ok "PROBE_OK missing"
+      printf '%s' "$o" | grep -q 'CWD='     || die repro-probe-cwd "cwd not \$WORK"
+      pass repro-once-probe
+
+      # 6. repro --once on an unknown name ⇒ exit 3, lists what IS available
+      rc=0
+      o="$(printf 't\n' | NIXX_REPRO='nope-nope' NIXX_REPRO_ONCE=1 ${B} 2>&1)" || rc=$?
+      test "$rc" -eq 3 || die repro-miss "unknown test should exit 3 (got $rc)"
+      printf '%s' "$o" | grep -q 'available' || die repro-miss-list "available list missing"
+      printf '%s' "$o" | grep -q 'green case' || die repro-miss-names "should name green case"
+      pass repro-once-unknown
+
+      echo "=== e2e-mktests: ALL PASSED ==="
+      touch "$out"
+    '';
 in
 {
   checks = {
@@ -870,5 +965,6 @@ in
     e2e-env-list = e2eEnvList;
     e2e-shellint = e2eShellint;
     e2e-shellint-fix = e2eShellintFix;
+    e2e-mktests = e2eMkTests;
   };
 }
