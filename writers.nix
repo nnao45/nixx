@@ -724,7 +724,15 @@ rec {
             exec bash -i
           fi
 
-          _nixx_setup_suite
+          # suite hooks run in THIS shell (their exports must reach every test),
+          # so we can only catch their exit status, not mid-body — but a nonzero
+          # status now fails the lane instead of being silently ignored.
+          local suite_rc=0
+          if ! _nixx_setup_suite; then
+            if [ -n "$use_tap" ]; then printf 'Bail out! setup_suite failed\n'
+            else printf '%s✗ setup_suite failed%s\n' "$r" "$z"; fi
+            return 1
+          fi
 
           for ((i = 0; i < total; i++)); do
             local name="''${_nixx_names[i]}" fn="''${_nixx_fns[i]}"
@@ -740,7 +748,13 @@ rec {
             # set -e inside the subshell: any non-zero command (assert OR bare command)
             # aborts and fails the test, matching the intuitive "any failure fails it".
             ( set -e; cd "$WORK"; _nixx_setup; "$fn"; ) >/dev/null 2>&1 || rc=$?
-            ( cd "$WORK" 2>/dev/null && _nixx_teardown; ) >/dev/null 2>&1 || true
+            # teardown always runs (even after a failed body); if the body passed,
+            # a failing teardown fails the test too — symmetric with setup.
+            local trc=0
+            ( set -e; cd "$WORK"; _nixx_teardown; ) >/dev/null 2>&1 || trc=$?
+            if [ "$rc" -eq 0 ] && [ "$trc" -ne 0 ]; then
+              _nixx_diag "teardown failed (exit $trc)"; rc=$trc
+            fi
 
             if [ "$rc" -eq 0 ]; then
               pass=$((pass + 1))
@@ -760,7 +774,7 @@ rec {
             fi
           done
 
-          _nixx_teardown_suite
+          _nixx_teardown_suite || suite_rc=1
 
           if [ -n "$use_tap" ]; then
             printf '1..%d\n' "$n"
@@ -775,7 +789,7 @@ rec {
             printf '\n'
           fi
 
-          [ "$fail" -eq 0 ]
+          [ "$fail" -eq 0 ] && [ "$suite_rc" -eq 0 ]
         }
       '').text;
       glue = ''

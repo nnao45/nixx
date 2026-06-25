@@ -888,7 +888,24 @@ let
           assert_output --partial 'EXPECTED'
         '';
       };
+      # teardown that fails while the body passes ⇒ the test must still go red.
+      tdFail = with nx; mkTests { name = "e2e-mktests-tdfail"; packages = [ pkgs.coreutils ]; } {
+        teardown = bash ''false'';
+        "body passes but teardown fails" = bash ''
+          run printf 'ok'
+          assert_success
+        '';
+      };
+      # a failing setup_suite ⇒ no test runs and the lane goes red.
+      ssFail = with nx; mkTests { name = "e2e-mktests-ssfail"; packages = [ pkgs.coreutils ]; } {
+        setup_suite = bash ''false'';
+        "should never run" = bash ''
+          echo SHOULD_NOT_APPEAR
+        '';
+      };
       B = "${mixed.fast}/bin/e2e-mktests-mixed-test";
+      TD = "${tdFail.fast}/bin/e2e-mktests-tdfail-test";
+      SS = "${ssFail.fast}/bin/e2e-mktests-ssfail-test";
     in
     pkgs.runCommand "e2e-mktests" { inherit green; } ''
       set -uo pipefail
@@ -940,6 +957,19 @@ let
       printf '%s' "$o" | grep -q 'available' || die repro-miss-list "available list missing"
       printf '%s' "$o" | grep -q 'green case' || die repro-miss-names "should name green case"
       pass repro-once-unknown
+
+      # 7. a passing body with a FAILING teardown ⇒ the test is reported red
+      rc=0; o="$(${TD} 2>&1)" || rc=$?
+      test "$rc" -ne 0 || die teardown-fail "failing teardown should fail the test"
+      printf '%s' "$o" | grep -q 'teardown failed' || die teardown-diag "teardown diagnostic missing"
+      pass teardown-failure-counts
+
+      # 8. a failing setup_suite ⇒ no body runs and the lane goes red
+      rc=0; o="$(${SS} 2>&1)" || rc=$?
+      test "$rc" -ne 0 || die setup-suite-fail "failing setup_suite should fail the lane"
+      printf '%s' "$o" | grep -q 'setup_suite failed' || die setup-suite-msg "setup_suite message missing"
+      if printf '%s' "$o" | grep -q 'SHOULD_NOT_APPEAR'; then die setup-suite-body "body ran despite setup_suite failure"; fi
+      pass setup-suite-failure-aborts
 
       echo "=== e2e-mktests: ALL PASSED ==="
       touch "$out"
