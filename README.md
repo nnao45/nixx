@@ -227,13 +227,14 @@ it's a nixx app, or via `src = ./.;` (mounted read-only as `$FIXTURES`).
 | **hermetic** | the returned derivation → `checks.<system>`; `nix flake check` builds it in the sandbox | CI, pre-commit — the source of truth |
 | **fast** | `.fast` — a devShell-lane runnable, no sandbox, instant | the carve-carve TDD loop |
 
-**`nixx test`** discovers `*_test.nix` and drives both lanes:
+**`nixx test`** (shipped as a flake app: `nix run nixx#test -- …`) discovers
+`*_test.nix` and drives both lanes:
 
 ```sh
-nixx test                     # fast lane: every *_test.nix under .
-nixx test -f deploy           # only tests whose name contains "deploy"
-nixx test --hermetic          # run each suite in the sandbox
-nix flake check               # the hermetic suites, as checks
+nix run nixx#test                 # fast lane: every *_test.nix under .
+nix run nixx#test -- -f deploy     # only tests whose name contains "deploy"
+nix run nixx#test -- --hermetic    # run each suite in the sandbox
+nix flake check                   # the hermetic suites, as checks
 ```
 
 When a hermetic test goes red, **`--repro`** drops you into that test's *exact*
@@ -242,7 +243,7 @@ helper loaded — as an interactive shell; type `t` to re-run the body and watch
 assertion fail live:
 
 ```sh
-nixx test path/to/x_test.nix --repro "jq extracts fields"
+nix run nixx#test -- path/to/x_test.nix --repro "jq extracts fields"
 #   cwd is $WORK (writable) · helpers loaded · `t` runs the body · Ctrl-D leaves
 ```
 

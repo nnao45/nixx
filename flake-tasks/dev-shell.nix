@@ -18,7 +18,8 @@ pkgs.mkShell {
       # install git hooks (pre-commit: fmt + nix flake check) from lefthook.yml
       lefthook install >/dev/null 2>&1 || true
       echo "nixx dev shell — uv $(uv --version 2>/dev/null), bun $(bun --version 2>/dev/null)"
-      echo "run tests:   nix run .#test"
+      echo "run tests:   nix run .#test            (*_test.nix suites)"
+      echo "lib unittest: nix run .#lib-tests"
       echo "format:      nix fmt"
       echo "lint/format: nix run .#nix-tasks -- check"
       echo "git hooks:   lefthook (pre-commit → fmt + nix flake check)"
