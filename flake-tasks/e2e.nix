@@ -1010,13 +1010,20 @@ let
         e = nixx.rawsh;
         #| echo SAME_LINE
       }).meta;
-      textOf = n: (builtins.head (builtins.filter (m: m.name == n) meta)).text;
+      metaOf = n: builtins.head (builtins.filter (m: m.name == n) meta);
+      textOf = n: (metaOf n).text;
+      # the source line `meta.line` points at, for diagnostics
+      srcLineOf = n:
+        let m = metaOf n; in
+        builtins.elemAt (pkgs.lib.splitString "\n" (builtins.readFile m.file)) (m.line - 1);
     in
     assert textOf "a" == "";
     assert pkgs.lib.hasInfix "OWN_BODY" (textOf "b");
     assert pkgs.lib.hasInfix "OPTS_BODY" (textOf "c");
     assert textOf "d" == "";
     assert pkgs.lib.hasInfix "SAME_LINE" (textOf "e");
+    # diagnostics: meta.line points at the `#|` body, not the multi-line opts
+    assert pkgs.lib.hasInfix "OPTS_BODY" (srcLineOf "c");
     pkgs.runCommand "e2e-rawsh" { } ''
       o=$(${runner}/bin/e2e-rawsh walls 2>&1) || { echo "$o"; echo "FAIL: nonzero"; exit 1; }
       printf '%s' "$o" | grep -q 'PASS: rawsh wall forms' || { echo "$o"; exit 1; }

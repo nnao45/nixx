@@ -267,6 +267,28 @@ let
     in
     if startLine == null then null else concatStringsSep "\n" (collect startLine);
 
+  # rawBodyLine — the 1-based source line of a rawsh body's first `#|` (same scan
+  # as rawBodyFromComment). Used for diagnostics: failure file:line should point
+  # at the body, not the attr/opts line that bodyStartLine's `''`-search returns.
+  rawBodyLine = file: line: col:
+    let
+      lines = splitLines (readFile file);
+      from = genList (i: elemAt lines (line - 1 + i)) (length lines - line + 1);
+      suffix = concatStringsSep "\n" from;
+      n = stringLength suffix;
+      semiOff = scanSemi suffix (col - 1);
+      markAfter = i:
+        if i >= n then null
+        else
+          let c = substring i 1 suffix; in
+          if c == " " || c == "\t" || c == "\n" || c == "\r" then markAfter (i + 1)
+          else if substring i 2 suffix == "#|" then i
+          else if c == "#" then markAfter (skipLine suffix n (i + 1))
+          else null;
+      markOff = if semiOff == null then null else markAfter (semiOff + 1);
+    in
+    if markOff == null then null else line + nlCount (substring 0 markOff suffix);
+
 
   # ---- per-language safe quoting ----
   # Each turns a Nix value into a valid string LITERAL in the target language,
@@ -728,6 +750,7 @@ let
         else
           let pos = builtins.unsafeGetAttrPos n taskAttrs;
           in if pos == null then null
+          else if full.${n}.__rawsh or false then rawBodyLine pos.file pos.line (pos.column or 1)
           else bodyStartLine pos.file pos.line (full.${n}.rawBody or "");
       fileOf = n:
         let pos = builtins.unsafeGetAttrPos n taskAttrs;
@@ -871,6 +894,7 @@ let
       lineOf = n:
         let pos = builtins.unsafeGetAttrPos n scriptAttrs;
         in if pos == null then null
+        else if full.${n}.__rawsh or false then rawBodyLine pos.file pos.line (pos.column or 1)
         else bodyStartLine pos.file pos.line (full.${n}.rawBody or "");
       fileOf = n:
         let pos = builtins.unsafeGetAttrPos n scriptAttrs;
