@@ -202,6 +202,35 @@ let
     in
     if open == null then null else scanBody suffix (open + 2) "";
 
+  # rawBodyFromComment — the escape-light *escape hatch*. A `rawsh` block has no
+  # '' string; its body lives in the `#|`-prefixed Nix line-comments that follow
+  # the attr. Nix never parses inside a comment, so the shell-only forms that the
+  # parse-wall would otherwise force an '' onto (${#x} ${x[@]} ${x^^} ${x%pat}
+  # ${arr[-1]} …) survive VERBATIM, with zero escaping. Line comments have no
+  # closing delimiter, so unlike a `/* */` block they can never be cut short by a
+  # `*/` glob in the shell. Returns the joined body, or null if no `#|` follows.
+  rawBodyFromComment = file: line:
+    let
+      lines = splitLines (readFile file);
+      total = length lines;
+      markRe = "([[:space:]]*)#\\|[[:space:]]?(.*)";
+      isMark = i: i < total && match markRe (elemAt lines i) != null;
+      bodyOf = i: elemAt (match markRe (elemAt lines i)) 1;
+      # The body is the `#|` run that IMMEDIATELY follows the binding: scan from
+      # the line after the attr (1-based `line` → 0-based index `line`), skipping
+      # only blank lines. The first non-blank line must be a `#|` marker, else
+      # there is no body — so an empty `name = rawsh;` can't steal the next attr's
+      # comment, and a stray comment between the decl and the body ends it.
+      findStart = i:
+        if i >= total then null
+        else if isBlank (elemAt lines i) then findStart (i + 1)
+        else if isMark i then i
+        else null;
+      collect = i: if isMark i then [ (bodyOf i) ] ++ collect (i + 1) else [ ];
+      start = findStart line;
+    in
+    if start == null then null else concatStringsSep "\n" (collect start);
+
 
   # ---- per-language safe quoting ----
   # Each turns a Nix value into a valid string LITERAL in the target language,
@@ -290,8 +319,39 @@ let
     in
     block;
 
+  # mkRawBlock — like mkBlock but the body is sourced from `#|` comment lines
+  # (see rawBodyFromComment), not a '' string. The `__rawsh` flag survives the
+  # opts functor (block // opts), so `rawsh { deps = [ … ]; }` still works.
+  mkRawBlock = lang:
+    let
+      block = {
+        __sh = true;
+        __lang = lang;
+        __rawsh = true;
+        env = { };
+        cwd = null;
+        deps = [ ];
+        group = null;
+        description = null;
+        text = "";
+        indent = 0;
+        rawBody = "";
+        __functor = _self: opts:
+          if opts ? packages
+          then throw "nixx: per-block `packages` is not supported; set it globally on mkApps/mkTasks."
+          else block // opts;
+      };
+    in
+    block;
+
   sh = mkBlock "bash"; # bash (default)
   bash = mkBlock "bash"; # alias of sh, reads naturally next to node/perl/...
+  # rawsh — escape-free escape hatch: write the body in `#|` comment lines so
+  # parse-wall forms (${#x} ${arr[@]} ${x^^} …) need no '' escape. See the
+  # `rawBodyFromComment` note. Usage:
+  #   process = rawsh;
+  #     #| for f in ${FILES[@]}; do echo "${#f}: ${f^^}"; done
+  rawsh = mkRawBlock "bash";
   py = mkBlock "python"; # python (lint: ruff)
   uv = mkBlock "python-uv"; # python + uv inline deps
   bun = mkBlock "bun"; # typescript/js via bun
@@ -348,6 +408,7 @@ let
     let
       raw =
         if pos == null then null
+        else if (b.__rawsh or false) then rawBodyFromComment pos.file pos.line
         else rawBodyFromSource pos.file pos.line (pos.column or 1);
     in
     if raw == null then b
@@ -402,9 +463,9 @@ let
         else if lang == "ruby" then viaArgs "ruby -"
         else if lang == "lua" then viaArgs "lua -"
         else if lang == "moonbit" then
-          # moonbit is compiled: write a minimal project to a temp dir and run via moon.
+        # moonbit is compiled: write a minimal project to a temp dir and run via moon.
           let
-            eot    = "NIXX_EOT_${name}";
+            eot = "NIXX_EOT_${name}";
             modEot = "NIXX_MOD_${name}";
             pkgEot = "NIXX_PKG_${name}";
           in
@@ -954,6 +1015,6 @@ let
 
 in
 {
-  inherit sh bash py uv bun ts node deno perl ruby lua moonbit mkBlock parallel
+  inherit sh bash py uv bun ts node deno perl ruby lua moonbit rawsh mkBlock parallel
     mkTasks mkScript mkScripts shellHook processCompose shq dedent langProfiles;
 }

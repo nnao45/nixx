@@ -974,6 +974,44 @@ let
       echo "=== e2e-mktests: ALL PASSED ==="
       touch "$out"
     '';
+
+  # rawsh — the escape-free escape hatch. Parse-wall forms (${#x} ${arr[@]}
+  # ${x^^} ${x%pat} ${arr[-1]} …) live in `#|` line-comments, so they need ZERO
+  # '' escaping. Two things are proven: (1) the forms actually EXPAND in real
+  # bash, and (2) an empty `a = rawsh;` can't steal the next attr's `#|` body.
+  e2eRawsh =
+    let
+      nx = forPkgs pkgs;
+      runner = (with nx; mkTasks { name = "e2e-rawsh"; } {
+        walls = rawsh;
+        #| arr=(alpha beta gamma)
+        #| test "${#arr[@]}" -eq 3              || { echo "FAIL: length"; exit 1; }
+        #| test "${arr[-1]}" = gamma            || { echo "FAIL: neg-index"; exit 1; }
+        #| test "${arr[*]}" = "alpha beta gamma" || { echo "FAIL: splat"; exit 1; }
+        #| f="Report.TXT"
+        #| test "${f%.TXT}" = Report            || { echo "FAIL: suffix"; exit 1; }
+        #| test "${f#Re}" = "port.TXT"          || { echo "FAIL: prefix"; exit 1; }
+        #| test "${f,,}" = report.txt           || { echo "FAIL: lower"; exit 1; }
+        #| test "${f^^}" = REPORT.TXT           || { echo "FAIL: upper"; exit 1; }
+        #| echo "PASS: rawsh wall forms expand in bash"
+      }).runner;
+      # eval-level: empty `a` must extract "" (no theft of b's #| body)
+      meta = (nixx.mkScripts { } {
+        a = nixx.rawsh;
+        b = nixx.rawsh;
+        #| echo OWN_BODY
+      }).meta;
+      textOf = n: (builtins.head (builtins.filter (m: m.name == n) meta)).text;
+    in
+    assert textOf "a" == "";
+    assert pkgs.lib.hasInfix "OWN_BODY" (textOf "b");
+    pkgs.runCommand "e2e-rawsh" { } ''
+      o=$(${runner}/bin/e2e-rawsh walls 2>&1) || { echo "$o"; echo "FAIL: nonzero"; exit 1; }
+      printf '%s' "$o" | grep -q 'PASS: rawsh wall forms' || { echo "$o"; exit 1; }
+      echo "PASS: empty rawsh steals nothing (eval-asserted)"
+      echo "=== e2e-rawsh: ALL PASSED ==="
+      touch "$out"
+    '';
 in
 {
   checks = {
@@ -996,5 +1034,6 @@ in
     e2e-shellint = e2eShellint;
     e2e-shellint-fix = e2eShellintFix;
     e2e-mktests = e2eMkTests;
+    e2e-rawsh = e2eRawsh;
   };
 }
