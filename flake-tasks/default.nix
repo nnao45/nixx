@@ -2,7 +2,7 @@
 
 let
   writers = writersFor pkgs;
-  inherit (writers) mkApps;
+  inherit (writers) mkApps nixxTest;
   writersMkTasks = writers.mkTasks;
 
   libTests = import ./lib-tests.nix { inherit mkApps nixx; };
@@ -33,20 +33,34 @@ let
 in
 rec {
   packages = {
-    test = libTests;
+    test = nixxTest; # `nixx test` — the *_test.nix discovery CLI
+    lib-tests = libTests; # nixx's own pure-Nix unit tests
     nix-tasks = nixTasks;
-    default = packages.test;
+    default = packages.lib-tests;
   };
 
+  # `program` must point at the real binary; `test`/`lib-tests` carry a binary
+  # name that differs from their attr (nixx-test / test), so they're spelled out
+  # rather than derived by the `${pkg}/bin/${name}` shorthand.
   apps = builtins.mapAttrs
     (name: pkg: {
       type = "app";
       program = "${pkg}/bin/${name}";
       meta.description = "nixx ${name}";
     })
-    (removeAttrs packages [ "default" ])
+    { inherit (packages) nix-tasks; }
   // {
-    default = apps.test;
+    default = apps.lib-tests;
+    test = {
+      type = "app";
+      program = "${nixxTest}/bin/nixx-test";
+      meta.description = "nixx test — discover & run *_test.nix suites";
+    };
+    lib-tests = {
+      type = "app";
+      program = "${libTests}/bin/test";
+      meta.description = "nixx lib unit tests";
+    };
     shellint = {
       type = "app";
       program = "${writers.shellintBin}/bin/nixx-shellint";
@@ -59,8 +73,6 @@ rec {
   devShells.default = import ./dev-shell.nix { inherit pkgs lib; };
 
   checks = packages // e2e.checks // {
-    lib-tests = libTests;
-    inherit (packages) nix-tasks;
     shellint = shellintCheck;
     engine-shellcheck = engineShellcheck;
   };

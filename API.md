@@ -409,9 +409,17 @@ assert. Failure diagnostics carry the `file:line` of the body and an
 expected/actual diff.
 
 ### `nixx test` — discovery CLI
-`writers.nixxTest` (exposed as `nixx test` once wired into your apps) sweeps a tree
-for `*_test.nix` and runs each suite. A `*_test.nix` evaluates to a `mkTests`
-result; the CLI is a thin driver over `nix-build`.
+`writers.nixxTest` sweeps a tree for `*_test.nix` and runs each suite. A
+`*_test.nix` evaluates to a `mkTests` result; the CLI is a thin driver over
+`nix-build`. nixx ships it as a flake app, so it runs without any wiring:
+
+```sh
+nix run nixx#test -- ./            # run *_test.nix suites in the current tree
+nix run nixx#test -- ./ -f deploy  # …filtered
+```
+
+To expose it under your own flake (e.g. `nix run .#test`), re-export it:
+`apps.${system}.test = { type = "app"; program = "${(inputs.nixx.lib.for pkgs).nixxTest}/bin/nixx-test"; };`.
 
 ```sh
 nixx test                     # fast lane: every *_test.nix under .
