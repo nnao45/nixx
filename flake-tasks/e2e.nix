@@ -1005,12 +1005,18 @@ let
           description = "multi-line opts";
         };
         #| echo OPTS_BODY
+        # two bindings sharing a line: `d` must NOT capture `e`'s body
+        d = nixx.rawsh;
+        e = nixx.rawsh;
+        #| echo SAME_LINE
       }).meta;
       textOf = n: (builtins.head (builtins.filter (m: m.name == n) meta)).text;
     in
     assert textOf "a" == "";
     assert pkgs.lib.hasInfix "OWN_BODY" (textOf "b");
     assert pkgs.lib.hasInfix "OPTS_BODY" (textOf "c");
+    assert textOf "d" == "";
+    assert pkgs.lib.hasInfix "SAME_LINE" (textOf "e");
     pkgs.runCommand "e2e-rawsh" { } ''
       o=$(${runner}/bin/e2e-rawsh walls 2>&1) || { echo "$o"; echo "FAIL: nonzero"; exit 1; }
       printf '%s' "$o" | grep -q 'PASS: rawsh wall forms' || { echo "$o"; exit 1; }

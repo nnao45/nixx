@@ -241,26 +241,31 @@ let
       # is handled); fall back to the attr line if no `;` is seen.
       from = genList (i: elemAt lines (line - 1 + i)) (total - line + 1);
       suffix = concatStringsSep "\n" from;
+      n = stringLength suffix;
       semiOff = scanSemi suffix (col - 1);
-      semiLine =
-        if semiOff == null then line - 1
-        else (line - 1) + nlCount (substring 0 semiOff suffix);
+      # From just past this binding's `;`, skip whitespace and ordinary `#`
+      # comments; the body starts iff the next real token is `#|`. Any other
+      # token (a sibling binding on the same line, real code) means this attr has
+      # no body — so an empty `a = rawsh;` can never capture a sibling's `#|`,
+      # even same-line, while a `## note` on the `;` line stays harmless.
+      markAfter = i:
+        if i >= n then null
+        else
+          let c = substring i 1 suffix; in
+          if c == " " || c == "\t" || c == "\n" || c == "\r" then markAfter (i + 1)
+          else if substring i 2 suffix == "#|" then i
+          else if c == "#" then markAfter (skipLine suffix n (i + 1))
+          else null;
+      markOff = if semiOff == null then null else markAfter (semiOff + 1);
+      startLine =
+        if markOff == null then null
+        else (line - 1) + nlCount (substring 0 markOff suffix);
       markRe = "([[:space:]]*)#\\|[[:space:]]?(.*)";
       isMark = i: i < total && match markRe (elemAt lines i) != null;
       bodyOf = i: elemAt (match markRe (elemAt lines i)) 1;
-      # The body is the `#|` run that IMMEDIATELY follows the binding's `;`,
-      # skipping only blank lines. The first non-blank line must be a `#|`
-      # marker, else there is no body — so an empty `name = rawsh;` can't steal
-      # the next attr's comment, and a stray comment between ends it.
-      findStart = i:
-        if i >= total then null
-        else if isBlank (elemAt lines i) then findStart (i + 1)
-        else if isMark i then i
-        else null;
       collect = i: if isMark i then [ (bodyOf i) ] ++ collect (i + 1) else [ ];
-      start = findStart (semiLine + 1);
     in
-    if start == null then null else concatStringsSep "\n" (collect start);
+    if startLine == null then null else concatStringsSep "\n" (collect startLine);
 
 
   # ---- per-language safe quoting ----
