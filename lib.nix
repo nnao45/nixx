@@ -143,6 +143,18 @@ let
     if i >= n then i
     else if substring i 1 s == "\n" then i + 1
     else skipLine s n (i + 1);
+  # skip a Nix indented string: i just past the opening ''; returns past the
+  # closing ''. Replays the '' escapes so an escaped '' ('''/''$/''\) inside
+  # doesn't falsely close — used by scanSemi so braces/semicolons in a rawsh
+  # opts string (description = ''closes }'';) aren't miscounted as syntax.
+  skipIndStr = s: n: i:
+    if i + 1 >= n then n
+    else if substring i 2 s == "''" then
+      let after = substring (i + 2) 1 s; in
+      if after == "'" || after == "$" then skipIndStr s n (i + 3)
+      else if after == "\\" then skipIndStr s n (i + 4)
+      else i + 2
+    else skipIndStr s n (i + 1);
   # bd = brace depth (opts), pd = paren/bracket depth. '' counts only at bd==0;
   # the terminating ; counts only at bd==0 && pd==0.
   scanOpen = s: start:
@@ -175,8 +187,9 @@ let
       go = i: bd: pd:
         if i >= n then null
         else
-          let c = substring i 1 s; in
-          if c == "\"" then go (skipStr s n (i + 1)) bd pd
+          let c = substring i 1 s; c2 = if i + 1 < n then substring i 2 s else ""; in
+          if c2 == "''" then go (skipIndStr s n (i + 2)) bd pd
+          else if c == "\"" then go (skipStr s n (i + 1)) bd pd
           else if c == "#" then go (skipLine s n (i + 1)) bd pd
           else if c == "{" then go (i + 1) (bd + 1) pd
           else if c == "}" then go (i + 1) (bd - 1) pd

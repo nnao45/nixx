@@ -1009,6 +1009,11 @@ let
         d = nixx.rawsh;
         e = nixx.rawsh;
         #| echo SAME_LINE
+        # an opts indented-string with } and ; must not be miscounted as syntax
+        f = nixx.rawsh {
+          description = ''has a } brace and ; semi'';
+        };
+        #| echo INDSTR_BODY
       }).meta;
       metaOf = n: builtins.head (builtins.filter (m: m.name == n) meta);
       textOf = n: (metaOf n).text;
@@ -1022,6 +1027,7 @@ let
     assert pkgs.lib.hasInfix "OPTS_BODY" (textOf "c");
     assert textOf "d" == "";
     assert pkgs.lib.hasInfix "SAME_LINE" (textOf "e");
+    assert pkgs.lib.hasInfix "INDSTR_BODY" (textOf "f");
     # diagnostics: meta.line points at the `#|` body, not the multi-line opts
     assert pkgs.lib.hasInfix "OPTS_BODY" (srcLineOf "c");
     pkgs.runCommand "e2e-rawsh" { } ''
