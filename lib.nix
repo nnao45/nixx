@@ -39,6 +39,7 @@ let
     stringLength substring match head tail foldl' genList attrNames toString readFile;
 
   splitLines = s: filter isString (split "\n" s);
+  nlCount = s: length (filter isString (split "\n" s)) - 1; # newlines in s
   isBlank = l: match "[[:space:]]*" l != null;
   chopNL = s:
     let n = stringLength s; in
@@ -164,6 +165,28 @@ let
     in
     go start 0 0;
 
+  # scanSemi — like scanOpen, but returns the offset of the `;` that terminates
+  # this binding (depth 0), skipping strings, `#` comments and `{ opts }`. A
+  # rawsh body is sought AFTER this `;`, so multi-line `rawsh { opts };` works
+  # (the attr position alone points only at the attr-name line).
+  scanSemi = s: start:
+    let
+      n = stringLength s;
+      go = i: bd: pd:
+        if i >= n then null
+        else
+          let c = substring i 1 s; in
+          if c == "\"" then go (skipStr s n (i + 1)) bd pd
+          else if c == "#" then go (skipLine s n (i + 1)) bd pd
+          else if c == "{" then go (i + 1) (bd + 1) pd
+          else if c == "}" then go (i + 1) (bd - 1) pd
+          else if c == "(" || c == "[" then go (i + 1) bd (pd + 1)
+          else if c == ")" || c == "]" then go (i + 1) bd (pd - 1)
+          else if c == ";" && bd == 0 && pd == 0 then i
+          else go (i + 1) bd pd;
+    in
+    go start 0 0;
+
   # scan a ''...'' body starting just past the opening ''. Replays Nix escapes
   # and stops at the closing ''. Returns the literal body text.
   scanBody = src: i: acc:
@@ -209,25 +232,33 @@ let
   # ${arr[-1]} …) survive VERBATIM, with zero escaping. Line comments have no
   # closing delimiter, so unlike a `/* */` block they can never be cut short by a
   # `*/` glob in the shell. Returns the joined body, or null if no `#|` follows.
-  rawBodyFromComment = file: line:
+  rawBodyFromComment = file: line: col:
     let
       lines = splitLines (readFile file);
       total = length lines;
+      # find the 0-based line index of this binding's terminating `;` by char-
+      # scanning from the attr position (so `rawsh { opts };` over several lines
+      # is handled); fall back to the attr line if no `;` is seen.
+      from = genList (i: elemAt lines (line - 1 + i)) (total - line + 1);
+      suffix = concatStringsSep "\n" from;
+      semiOff = scanSemi suffix (col - 1);
+      semiLine =
+        if semiOff == null then line - 1
+        else (line - 1) + nlCount (substring 0 semiOff suffix);
       markRe = "([[:space:]]*)#\\|[[:space:]]?(.*)";
       isMark = i: i < total && match markRe (elemAt lines i) != null;
       bodyOf = i: elemAt (match markRe (elemAt lines i)) 1;
-      # The body is the `#|` run that IMMEDIATELY follows the binding: scan from
-      # the line after the attr (1-based `line` → 0-based index `line`), skipping
-      # only blank lines. The first non-blank line must be a `#|` marker, else
-      # there is no body — so an empty `name = rawsh;` can't steal the next attr's
-      # comment, and a stray comment between the decl and the body ends it.
+      # The body is the `#|` run that IMMEDIATELY follows the binding's `;`,
+      # skipping only blank lines. The first non-blank line must be a `#|`
+      # marker, else there is no body — so an empty `name = rawsh;` can't steal
+      # the next attr's comment, and a stray comment between ends it.
       findStart = i:
         if i >= total then null
         else if isBlank (elemAt lines i) then findStart (i + 1)
         else if isMark i then i
         else null;
       collect = i: if isMark i then [ (bodyOf i) ] ++ collect (i + 1) else [ ];
-      start = findStart line;
+      start = findStart (semiLine + 1);
     in
     if start == null then null else concatStringsSep "\n" (collect start);
 
@@ -408,7 +439,7 @@ let
     let
       raw =
         if pos == null then null
-        else if (b.__rawsh or false) then rawBodyFromComment pos.file pos.line
+        else if (b.__rawsh or false) then rawBodyFromComment pos.file pos.line (pos.column or 1)
         else rawBodyFromSource pos.file pos.line (pos.column or 1);
     in
     if raw == null then b

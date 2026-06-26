@@ -1000,11 +1000,17 @@ let
         a = nixx.rawsh;
         b = nixx.rawsh;
         #| echo OWN_BODY
+        # body must be found AFTER a multi-line `{ opts }`, not the attr line
+        c = nixx.rawsh {
+          description = "multi-line opts";
+        };
+        #| echo OPTS_BODY
       }).meta;
       textOf = n: (builtins.head (builtins.filter (m: m.name == n) meta)).text;
     in
     assert textOf "a" == "";
     assert pkgs.lib.hasInfix "OWN_BODY" (textOf "b");
+    assert pkgs.lib.hasInfix "OPTS_BODY" (textOf "c");
     pkgs.runCommand "e2e-rawsh" { } ''
       o=$(${runner}/bin/e2e-rawsh walls 2>&1) || { echo "$o"; echo "FAIL: nonzero"; exit 1; }
       printf '%s' "$o" | grep -q 'PASS: rawsh wall forms' || { echo "$o"; exit 1; }
