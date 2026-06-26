@@ -39,6 +39,7 @@ let
     stringLength substring match head tail foldl' genList attrNames toString readFile;
 
   splitLines = s: filter isString (split "\n" s);
+  nlCount = s: length (filter isString (split "\n" s)) - 1; # newlines in s
   isBlank = l: match "[[:space:]]*" l != null;
   chopNL = s:
     let n = stringLength s; in
@@ -142,6 +143,18 @@ let
     if i >= n then i
     else if substring i 1 s == "\n" then i + 1
     else skipLine s n (i + 1);
+  # skip a Nix indented string: i just past the opening ''; returns past the
+  # closing ''. Replays the '' escapes so an escaped '' ('''/''$/''\) inside
+  # doesn't falsely close — used by scanSemi so braces/semicolons in a rawsh
+  # opts string (description = ''closes }'';) aren't miscounted as syntax.
+  skipIndStr = s: n: i:
+    if i + 1 >= n then n
+    else if substring i 2 s == "''" then
+      let after = substring (i + 2) 1 s; in
+      if after == "'" || after == "$" then skipIndStr s n (i + 3)
+      else if after == "\\" then skipIndStr s n (i + 4)
+      else i + 2
+    else skipIndStr s n (i + 1);
   # bd = brace depth (opts), pd = paren/bracket depth. '' counts only at bd==0;
   # the terminating ; counts only at bd==0 && pd==0.
   scanOpen = s: start:
@@ -160,6 +173,29 @@ let
           else if c == "(" || c == "[" then go (i + 1) bd (pd + 1)
           else if c == ")" || c == "]" then go (i + 1) bd (pd - 1)
           else if c == ";" && bd == 0 && pd == 0 then null   # binding ends, no body
+          else go (i + 1) bd pd;
+    in
+    go start 0 0;
+
+  # scanSemi — like scanOpen, but returns the offset of the `;` that terminates
+  # this binding (depth 0), skipping strings, `#` comments and `{ opts }`. A
+  # rawsh body is sought AFTER this `;`, so multi-line `rawsh { opts };` works
+  # (the attr position alone points only at the attr-name line).
+  scanSemi = s: start:
+    let
+      n = stringLength s;
+      go = i: bd: pd:
+        if i >= n then null
+        else
+          let c = substring i 1 s; c2 = if i + 1 < n then substring i 2 s else ""; in
+          if c2 == "''" then go (skipIndStr s n (i + 2)) bd pd
+          else if c == "\"" then go (skipStr s n (i + 1)) bd pd
+          else if c == "#" then go (skipLine s n (i + 1)) bd pd
+          else if c == "{" then go (i + 1) (bd + 1) pd
+          else if c == "}" then go (i + 1) (bd - 1) pd
+          else if c == "(" || c == "[" then go (i + 1) bd (pd + 1)
+          else if c == ")" || c == "]" then go (i + 1) bd (pd - 1)
+          else if c == ";" && bd == 0 && pd == 0 then i
           else go (i + 1) bd pd;
     in
     go start 0 0;
@@ -201,6 +237,70 @@ let
       open = scanOpen suffix (col - 1);
     in
     if open == null then null else scanBody suffix (open + 2) "";
+
+  # rawBodyFromComment — the escape-light *escape hatch*. A `rawsh` block has no
+  # '' string; its body lives in the `#|`-prefixed Nix line-comments that follow
+  # the attr. Nix never parses inside a comment, so the shell-only forms that the
+  # parse-wall would otherwise force an '' onto (${#x} ${x[@]} ${x^^} ${x%pat}
+  # ${arr[-1]} …) survive VERBATIM, with zero escaping. Line comments have no
+  # closing delimiter, so unlike a `/* */` block they can never be cut short by a
+  # `*/` glob in the shell. Returns the joined body, or null if no `#|` follows.
+  rawBodyFromComment = file: line: col:
+    let
+      lines = splitLines (readFile file);
+      total = length lines;
+      # find the 0-based line index of this binding's terminating `;` by char-
+      # scanning from the attr position (so `rawsh { opts };` over several lines
+      # is handled); fall back to the attr line if no `;` is seen.
+      from = genList (i: elemAt lines (line - 1 + i)) (total - line + 1);
+      suffix = concatStringsSep "\n" from;
+      n = stringLength suffix;
+      semiOff = scanSemi suffix (col - 1);
+      # From just past this binding's `;`, skip whitespace and ordinary `#`
+      # comments; the body starts iff the next real token is `#|`. Any other
+      # token (a sibling binding on the same line, real code) means this attr has
+      # no body — so an empty `a = rawsh;` can never capture a sibling's `#|`,
+      # even same-line, while a `## note` on the `;` line stays harmless.
+      markAfter = i:
+        if i >= n then null
+        else
+          let c = substring i 1 suffix; in
+          if c == " " || c == "\t" || c == "\n" || c == "\r" then markAfter (i + 1)
+          else if substring i 2 suffix == "#|" then i
+          else if c == "#" then markAfter (skipLine suffix n (i + 1))
+          else null;
+      markOff = if semiOff == null then null else markAfter (semiOff + 1);
+      startLine =
+        if markOff == null then null
+        else (line - 1) + nlCount (substring 0 markOff suffix);
+      markRe = "([[:space:]]*)#\\|[[:space:]]?(.*)";
+      isMark = i: i < total && match markRe (elemAt lines i) != null;
+      bodyOf = i: elemAt (match markRe (elemAt lines i)) 1;
+      collect = i: if isMark i then [ (bodyOf i) ] ++ collect (i + 1) else [ ];
+    in
+    if startLine == null then null else concatStringsSep "\n" (collect startLine);
+
+  # rawBodyLine — the 1-based source line of a rawsh body's first `#|` (same scan
+  # as rawBodyFromComment). Used for diagnostics: failure file:line should point
+  # at the body, not the attr/opts line that bodyStartLine's `''`-search returns.
+  rawBodyLine = file: line: col:
+    let
+      lines = splitLines (readFile file);
+      from = genList (i: elemAt lines (line - 1 + i)) (length lines - line + 1);
+      suffix = concatStringsSep "\n" from;
+      n = stringLength suffix;
+      semiOff = scanSemi suffix (col - 1);
+      markAfter = i:
+        if i >= n then null
+        else
+          let c = substring i 1 suffix; in
+          if c == " " || c == "\t" || c == "\n" || c == "\r" then markAfter (i + 1)
+          else if substring i 2 suffix == "#|" then i
+          else if c == "#" then markAfter (skipLine suffix n (i + 1))
+          else null;
+      markOff = if semiOff == null then null else markAfter (semiOff + 1);
+    in
+    if markOff == null then null else line + nlCount (substring 0 markOff suffix);
 
 
   # ---- per-language safe quoting ----
@@ -290,8 +390,39 @@ let
     in
     block;
 
+  # mkRawBlock — like mkBlock but the body is sourced from `#|` comment lines
+  # (see rawBodyFromComment), not a '' string. The `__rawsh` flag survives the
+  # opts functor (block // opts), so `rawsh { deps = [ … ]; }` still works.
+  mkRawBlock = lang:
+    let
+      block = {
+        __sh = true;
+        __lang = lang;
+        __rawsh = true;
+        env = { };
+        cwd = null;
+        deps = [ ];
+        group = null;
+        description = null;
+        text = "";
+        indent = 0;
+        rawBody = "";
+        __functor = _self: opts:
+          if opts ? packages
+          then throw "nixx: per-block `packages` is not supported; set it globally on mkApps/mkTasks."
+          else block // opts;
+      };
+    in
+    block;
+
   sh = mkBlock "bash"; # bash (default)
   bash = mkBlock "bash"; # alias of sh, reads naturally next to node/perl/...
+  # rawsh — escape-free escape hatch: write the body in `#|` comment lines so
+  # parse-wall forms (${#x} ${arr[@]} ${x^^} …) need no '' escape. See the
+  # `rawBodyFromComment` note. Usage:
+  #   process = rawsh;
+  #     #| for f in ${FILES[@]}; do echo "${#f}: ${f^^}"; done
+  rawsh = mkRawBlock "bash";
   py = mkBlock "python"; # python (lint: ruff)
   uv = mkBlock "python-uv"; # python + uv inline deps
   bun = mkBlock "bun"; # typescript/js via bun
@@ -348,6 +479,7 @@ let
     let
       raw =
         if pos == null then null
+        else if (b.__rawsh or false) then rawBodyFromComment pos.file pos.line (pos.column or 1)
         else rawBodyFromSource pos.file pos.line (pos.column or 1);
     in
     if raw == null then b
@@ -402,9 +534,9 @@ let
         else if lang == "ruby" then viaArgs "ruby -"
         else if lang == "lua" then viaArgs "lua -"
         else if lang == "moonbit" then
-          # moonbit is compiled: write a minimal project to a temp dir and run via moon.
+        # moonbit is compiled: write a minimal project to a temp dir and run via moon.
           let
-            eot    = "NIXX_EOT_${name}";
+            eot = "NIXX_EOT_${name}";
             modEot = "NIXX_MOD_${name}";
             pkgEot = "NIXX_PKG_${name}";
           in
@@ -631,6 +763,7 @@ let
         else
           let pos = builtins.unsafeGetAttrPos n taskAttrs;
           in if pos == null then null
+          else if full.${n}.__rawsh or false then rawBodyLine pos.file pos.line (pos.column or 1)
           else bodyStartLine pos.file pos.line (full.${n}.rawBody or "");
       fileOf = n:
         let pos = builtins.unsafeGetAttrPos n taskAttrs;
@@ -774,6 +907,7 @@ let
       lineOf = n:
         let pos = builtins.unsafeGetAttrPos n scriptAttrs;
         in if pos == null then null
+        else if full.${n}.__rawsh or false then rawBodyLine pos.file pos.line (pos.column or 1)
         else bodyStartLine pos.file pos.line (full.${n}.rawBody or "");
       fileOf = n:
         let pos = builtins.unsafeGetAttrPos n scriptAttrs;
@@ -954,6 +1088,6 @@ let
 
 in
 {
-  inherit sh bash py uv bun ts node deno perl ruby lua moonbit mkBlock parallel
+  inherit sh bash py uv bun ts node deno perl ruby lua moonbit rawsh mkBlock parallel
     mkTasks mkScript mkScripts shellHook processCompose shq dedent langProfiles;
 }

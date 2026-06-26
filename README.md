@@ -62,10 +62,10 @@ The common shell forms work with zero prefix. A few aren't valid Nix inside
 | form | zero prefix? | example |
 |---|---|---|
 | `${VAR}`, `$VAR`, `$@`, `$?` | ✅ | `echo ${HOME}` |
-| `${VAR:-d}` `${VAR:-}` `${VAR:=d}` `${VAR:?e}` `${VAR:+x}` | ✅ | `echo ${EDITOR:-vi}` |
+| `${VAR:-d}` `${VAR:=d}` `${VAR:?e}` `${VAR:+x}` and the colon-less `${VAR-d}` `${VAR+x}` `${VAR?e}` | ✅ | `echo ${EDITOR:-vi}` |
 | `${VAR:off:len}` (substring) | ✅ | `echo ${name:0:3}` |
-| `${!ref}` (indirect) `${ARR[0]}` (numeric index) | ✅ | `echo ${!chosen}` |
-| `${VAR/old/new}` (operands identifier-only) | ✅ | `echo ${PATH//bin/BIN}` |
+| `${!ref}` (indirect) `${ARR[0]}` / `${ARR[i]}` (numeric **or** variable index) | ✅ | `echo ${ARR[i]}` |
+| `${VAR/old/new}` `${VAR//old/new}` (operands identifier-only) | ✅ | `echo ${PATH//bin/BIN}` |
 | `${ARR[@]}` `${#VAR}` `${VAR%x}` `${VAR#x}` `${VAR^^}` `${VAR,,}` `${ARR[-1]}` | ❌ use `''` | `for x in ''${ARR[@]}; do …` |
 | `${VAR/o/n}` whose operand carries `, ; # %` etc. | ❌ use `''` | `''${csv/,/;}` |
 
@@ -74,6 +74,21 @@ Pillar 2 closes: **forget an `''` on a ❌ row, or write a bare `${VAR}` with no
 `with`, and `shellint` points at the precise `file:line`** instead of leaving you
 a cryptic Nix parse error. (Mechanism — lazy thunks, `unsafeGetAttrPos`, the
 parse-wall rule — in [API.md](./API.md).)
+
+**Hate even that?** The `❌` rows exist because Nix's *parser* rejects those forms
+inside a string (`#` opens a comment, `[@]`/`%`/`^` aren't operators) — it's the
+Nix grammar, not nixx. The escape hatch is **`rawsh`**: put the body in `#|`
+line-comments, which Nix never parses, so **every** parse-wall form survives with
+**zero** escaping (and no `with`):
+
+```nix
+process = rawsh;
+  #| for f in ${FILES[@]}; do echo "${#f}: ${f^^} ${f%.txt}"; done
+```
+
+The trade is the body is a comment, so editors/`shellint` don't see it as shell.
+Reach for it only when a block is dense with `❌` forms; keep `bash ''…''` (lint +
+highlighting) for everything else.
 
 > **Trade-off.** Any `with` defers undefined-variable checking, so a typo in
 > *never-evaluated* code under its scope won't be caught statically — which is

@@ -35,10 +35,39 @@ applies to a standalone `mkScript`, because that has no literal attrset position
 to read from. For it, either escape, or pass Nix values with the `@nix(…)`
 markers below.
 
-Even on the source-read path, a `${…}` that isn't valid Nix (`${VAR:-}`,
-`${ARR[@]}`, `${V^^}`, `${P##*/}`, `${!ref}`) still needs the `''${` escape —
-Nix's lexer rejects it at *parse* time, before any source read. A plain
-`${VAR}` / `$VAR` is raw; see the README's "what's raw, what's constrained".
+Even on the source-read path, a few `${…}` forms that Nix's lexer rejects at
+*parse* time (before any source read) still need the `''${` escape: `${ARR[@]}`
+`${ARR[*]}` `${#x}` `${x^^}` `${x,,}` `${x%pat}` `${x#pat}` `${ARR[-1]}` `${x@Q}`,
+and a `${x/old/new}` whose operands carry specials (`:` space `,` …). Forms that
+*do* parse need no escape — including `${VAR:-d}` `${VAR-d}` `${VAR+x}`
+`${VAR:?e}` `${VAR:1:2}` `${!ref}` `${ARR[0]}` `${ARR[i]}` `${VAR//a/b}` — see the
+README's table. A plain `${VAR}` / `$VAR` is always raw.
+
+#### `rawsh` — the escape hatch for parse-wall forms
+When a body is dense with the `''${` forms above, write it with **`rawsh`**
+instead of `bash`: the body lives in the `#|` line-comments right after the attr,
+and since Nix never parses inside a comment, **every** parse-wall form survives
+with zero escaping and no `with`.
+
+```nix
+with inputs.nixx.lib.for pkgs;
+mkTasks { } {
+  report = rawsh;
+    #| for f in ${FILES[@]}; do          # ${arr[@]}, ${#x}, ${x^^}, ${x%p} …
+    #|   printf '%s\t%s\n' "${#f}" "${f^^}"   #   all raw, no '' anywhere
+    #| done
+}
+```
+
+Rules:
+- The body is the **contiguous `#|` run immediately after the attr** (blank lines
+  between the `= rawsh;` and the first `#|` are fine). A blank line *within* the
+  run ends it — use an empty `#|` for an intentional blank line.
+- Works wherever a block does (`mkApps` / `mkTasks` / `mkScripts` / `mkTests`),
+  and takes opts the usual way: `rawsh { deps = [ … ]; }`.
+- **Trade-off:** the body is a Nix comment, so `shellint` and editors don't lint
+  or highlight it as shell. Use `rawsh` only for wall-heavy blocks; keep
+  `bash ''…''` (lint + highlighting) for everything else.
 
 ## `mkApps` — build shippable store binaries
 Reads each block's `__lang` and dispatches to the matching builder; the result
