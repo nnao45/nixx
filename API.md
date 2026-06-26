@@ -689,11 +689,12 @@ errors).
 The root `flake.nix` is the library itself plus its own checks:
 
 ```
-nix run   .#test                  # pure-Nix lib unit tests (tests/lib-tests.nix)
+nix run   .#test                  # the nixx test CLI over this repo's *_test.nix
+nix run   .#lib-tests             # pure-Nix lib unit tests (tests/lib-tests.nix)
 nix run   .#nix-tasks -- --list   # list this repo's lint/format tasks
 nix run   .#nix-tasks -- check    # fmt-check + statix + nixf (a mkTasks runner)
 nix develop                       # uv ruff bun node shellcheck nixpkgs-fmt statix nixf jq
-nix flake check                   # lib tests + nix-tasks + e2e task runners (all gated)
+nix flake check                   # lib tests + nix-tasks + e2e + mktests (all gated)
 ```
 
 A runnable example **per language** lives in `examples/simple01`:
